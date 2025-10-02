@@ -1,0 +1,1700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MTG Proxy Maker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --cell-w: 2.4750in; /* default card width */
+      --cell-h: 3.4650in; /* default card height */
+      --cols: 3;
+      --rows: 3;
+      --grid-w: calc(var(--cols) * var(--cell-w));
+      --grid-h: calc(var(--rows) * var(--cell-h));
+      --page-w: 8.5in;
+      --page-h: 11in;
+      --page-bg: white;
+      --grid-gap: 0in;
+      --guide-color: rgba(0,0,0,.25);
+      --preview-scale: 1;
+      --preview-bottom-gap: 5vh;
+
+      /* print-safe margin above the grid */
+      --grid-top: 0.25in;
+
+      /* horizontal offset for fine printer tuning */
+      --grid-left: 0in;
+    }
+
+    html, body { height: 100%; margin: 0; overflow: hidden; background: #f3f4f6; color: #111827; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+
+    .app { height: 100vh; display: grid; grid-template-rows: auto auto 1fr; gap: 12px; box-sizing: border-box; }
+    header { background: white; border-bottom: 1px solid #e5e7eb; position: sticky; top: 0; z-index: 10; }
+    .bar { max-width: 1200px; margin: 0 auto; display: flex; gap: 12px; align-items: center; padding: 10px 16px; }
+    .bar h1 { font-size: 16px; margin: 0; font-weight: 700; }
+    .bar .spacer { flex: 1; }
+
+    button, label.button { border: 1px solid #d1d5db; background: #111827; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 14px; }
+    button.secondary, label.secondary { background: white; color: #111827; border-color: #9ca3af; }
+    button.danger { background: #b91c1c; color: #fff; border-color: #991b1b; }
+
+    select, input[type="checkbox"], input[type="text"], textarea, input[type="number"] { border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 8px; font-size: 14px; background: white; color: #111827; }
+
+    .controls{ max-width:1200px; width:100%; margin: 0 auto; }
+    .panel{ background: white; border:1px solid #e5e7eb; border-radius:12px; padding:12px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+    .field{ display:flex; align-items:center; gap:8px; }
+
+    .status { font-size: 12px; color: #6b7280; margin-left: 8px; }
+
+    main { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; box-sizing: border-box; min-height: 0; }
+
+    .page-wrap{ width: calc(var(--page-w) * var(--preview-scale)); height: calc(var(--page-h) * var(--preview-scale)); position: relative; display: grid; place-items: start center; margin: auto 0 var(--preview-bottom-gap) 0; flex-shrink: 0; max-height: 100%; overflow: visible; }
+
+    .page {
+      width: var(--page-w);
+      height: var(--page-h);
+      background: var(--page-bg);
+      box-shadow: 0 10px 30px rgba(0,0,0,.12);
+      position: relative;
+      display: grid;
+      place-items: start center;
+      padding-top: var(--grid-top);
+      transform-origin: top left;
+      transform: scale(var(--preview-scale));
+      margin: 0;
+    }
+    .page:not(.current) { display: none; }
+
+    .pages-controls { display:flex; align-items:center; gap:8px; }
+    .pages-controls .pill { font-variant-numeric: tabular-nums; padding: 4px 8px; border:1px solid #e5e7eb; border-radius: 999px; background:#f9fafb; }
+
+    .grid { width: var(--grid-w); height: var(--grid-h); display: grid; grid-template-columns: repeat(var(--cols), var(--cell-w)); grid-template-rows: repeat(var(--rows), var(--cell-h)); gap: var(--grid-gap); position: relative; z-index: 1; transform: translateX(var(--grid-left)); }
+
+    .page .cut-overlay { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .15s ease-in-out; z-index: 3; transform: translateX(var(--grid-left)); }
+    .cut-overlay svg { position:absolute; inset:0; width:100%; height:100%; display:block; }
+    .show-cuts .cut-overlay { opacity: 1; }
+    .show-cuts .cell { border-color: transparent !important; }
+
+    .cell { width: var(--cell-w); height: var(--cell-h); border: 0.5pt dashed var(--guide-color); background: #f9fafb; position: relative; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; }
+    .cell img { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: none; image-rendering: auto; -webkit-user-drag: none; user-select: none; }
+    .cell .placeholder{ color: #9ca3af; font-size: 12px; text-align: center; padding: 8px; user-select: none; }
+
+    .cell:focus { outline: none; }
+    .cell::after{
+      content:""; position:absolute; inset:0; border-radius: 8px;
+      pointer-events:none; z-index:5; opacity:0; transition:opacity .12s ease-in-out;
+    }
+    .cell:focus::after{
+      opacity:1;
+      box-shadow:
+        inset 0 0 0 3px #ffffff,
+        inset 0 0 0 6px #2563eb;
+    }
+    .cell.drop-target::after{
+      opacity:1;
+      box-shadow:
+        inset 0 0 0 3px #ffffff,
+        inset 0 0 0 6px #60a5fa;
+    }
+
+    .cell.dragging { opacity: .6; }
+
+    .drop-hint { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(17,24,39,.08); border: 2px dashed #4b5563; border-radius: 8px; font-weight: 700; color: #374151; pointer-events: none; }
+    .page.dragover .drop-hint { display: flex; }
+
+    /* Instruct printers on paper size */
+    @page { size: 8.5in 11in; margin: 0; }
+
+    /* ====== PRINT ====== */
+    @media print{
+      header, .controls, .screen-only { display: none !important; }
+
+      html, body { width: auto; height: auto; margin: 0; }
+      body { display: block !important; background: white; overflow: visible !important; }
+      .app { display: block !important; height: auto !important; }
+      main { display: block !important; overflow: visible !important; min-height: 0 !important; }
+
+      .page-wrap{
+        width: auto !important;
+        height: auto !important;
+        margin: 0 !important;
+        display: block !important;
+        overflow: visible !important;
+        place-items: initial !important;
+      }
+
+      .page{
+        width: var(--page-w);
+        height: var(--page-h);
+        transform: none !important;
+        box-shadow: none !important;
+        position: static !important;
+        display: block !important;
+        padding-top: var(--grid-top);
+        margin: 0 !important;
+        box-sizing: border-box;
+        break-inside: avoid;
+        page-break-inside: avoid;
+        break-after: auto !important;
+        page-break-after: auto !important;
+      }
+
+      .page .grid { margin-left: auto !important; margin-right: auto !important; }
+
+      .page + .page{
+        break-before: page;
+        page-break-before: always;
+      }
+
+      .page:not(.current){ display: block !important; }
+
+      .cell{ border: none !important; }
+      .cell .placeholder{ display: none !important; }
+      .cell::after{ display:none !important; }
+      .drop-hint{ display:none !important; }
+
+      img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; align-items:center; justify-content:center; z-index: 50; }
+    .modal.open { display:flex; }
+    .modal .sheet { width: min(900px, 92vw); background: white; border-radius: 12px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.2); display:flex; flex-direction:column; gap:12px; align-items: stretch; border:1px solid #e5e7eb; }
+    .modal .sheet h2 { margin:0; font-size:18px; }
+
+    .help-list { margin:0; padding-left:18px; font-size:13px; line-height:1.6; }
+    .footnote { font-size: 12px; color:#6b7280; margin-top: 4px; }
+
+    .modal .sheet textarea { width: 100%; min-height: 240px; resize: vertical; box-sizing: border-box; display: block; margin: 0; }
+    .right { margin-left: auto; }
+
+    .warning { background:#fff7ed; color:#7c2d12; border:1px solid #fdba74; padding:8px 10px; border-radius:8px; font-size:13px; }
+
+    :root[data-theme="dark"] body { background:#0b0d10; color:#e5e7eb; }
+    :root[data-theme="dark"] header { background:#111827; border-bottom-color:#1f2937; }
+    :root[data-theme="dark"] .panel { background:#111827; border-color:#1f2937; }
+    :root[data-theme="dark"] .bar h1 { color:#e5e7eb; }
+    :root[data-theme="dark"] .status { color:#9ca3af; }
+    :root[data-theme="dark"] .pill { background:#0f172a; border-color:#1f2937; color:#e5e7eb; }
+    :root[data-theme="dark"] select,
+    :root[data-theme="dark"] input[type="checkbox"],
+    :root[data-theme="dark"] input[type="text"],
+    :root[data-theme="dark"] input[type="number"],
+    :root[data-theme="dark"] textarea {
+      background:#0f172a; color:#e5e7eb; border-color:#334155;
+    }
+    :root[data-theme="dark"] button.secondary,
+    :root[data-theme="dark"] label.secondary {
+      background:#1f2937; color:#e5e7eb; border-color:#374151;
+    }
+    :root[data-theme="dark"] button.danger { background:#b91c1c; border-color:#7f1d1d; }
+    :root[data-theme="dark"] .cell { background:#0b1220; }
+    :root[data-theme="dark"] .cell .placeholder { color:#94a3b8; }
+    :root[data-theme="dark"] .drop-hint { background:rgba(255,255,255,.06); border-color:#94a3b8; color:#e5e7eb; }
+    :root[data-theme="dark"] .page { background:var(--page-bg); }
+    :root[data-theme="dark"] .modal .sheet { background:#111827; color:#e5e7eb; border-color:#1f2937; }
+    :root[data-theme="dark"] .modal .sheet h2,
+    :root[data-theme="dark"] .modal .sheet h3 { color:#e5e7eb; }
+    :root[data-theme="dark"] .help-list { color:#cbd5e1; }
+    :root[data-theme="dark"] .footnote { color:#9ca3af; }
+    :root[data-theme="dark"] .warning { background:#292524; color:#fed7aa; border-color:#a16207; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="bar">
+        <h1>MTG Proxy Maker</h1>
+        <div class="spacer"></div>
+        <div class="pages-controls screen-only">
+          <button id="prevPageBtn" class="secondary" title="Prev page [ or Ctrl+← / ⌘+←">‹</button>
+          <span id="pageBadge" class="pill">Page 1 / 1</span>
+          <button id="nextPageBtn" class="secondary" title="Next page ] or Ctrl+→ / ⌘+→">›</button>
+          <button id="addPageBtn" class="secondary" title="Add page (N)">+ Page</button>
+          <button id="removePageBtn" class="secondary" title="Remove current page (Shift+Delete/Backspace)">− Page</button>
+          <button id="helpBtn" class="secondary" title="Help / Hotkeys">?</button>
+        </div>
+        <label class="button secondary screen-only">
+          Add Images
+          <input id="fileInput" type="file" accept="image/*" multiple style="display:none" />
+        </label>
+        <button id="clearBtn" class="secondary screen-only" title="Clear current page (Ctrl/⌘+Delete/Backspace)">Clear</button>
+        <button id="clearAllBtn" class="danger screen-only" title="Clear ALL pages (Ctrl/⌘+Shift+Delete/Backspace)">Clear All</button>
+        <button id="printBtn" title="Open print dialog (P)">Print</button>
+      </div>
+    </header>
+
+    <div class="controls screen-only">
+      <div class="panel">
+        <div class="field">
+          <strong>Fit:</strong>
+          <select id="fitMode">
+            <option value="cover" selected>Cover (fill & crop)</option>
+            <option value="contain">Contain (fit inside, may letterbox)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label class="field" title="Draw thin guides around cells for alignment">
+            <input type="checkbox" id="toggleGuides" checked /> Show guides
+          </label>
+        </div>
+        <div class="field">
+          <label class="field" title="Draw cut lines at cell borders"><input type="checkbox" id="toggleCutMarks" /> Cut marks</label>
+        </div>
+        <div class="field">
+          <input id="cardSearch" type="text" placeholder="Add card by name (Enter)" style="min-width:240px" />
+          <button id="addCardBtn" class="secondary">Add</button>
+          <button id="decklistBtn" class="secondary" title="Paste a decklist to auto-fill">Decklist</button>
+        </div>
+        <div class="status" id="status" role="status" aria-live="polite">Ready</div>
+        <div class="spacer"></div>
+      </div>
+    </div>
+
+    <main>
+      <div id="pageWrap" class="page-wrap"></div>
+    </main>
+  </div>
+
+  <!-- Decklist modal -->
+  <div id="deckModal" class="modal">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="deckTitle">
+      <h2 id="deckTitle">Import decklist (Scryfall)</h2>
+      <p style="margin:0;color:#6b7280;font-size:13px">Format: <code>4 Lightning Bolt</code>, one per line. Optional set code with <code>[M11]</code> or <code>(M11)</code>. DFCs use the front face.</p>
+      <textarea id="deckText" placeholder="4 Lightning Bolt&#10;2 Snapcaster Mage&#10;1 Sol Ring"></textarea>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <label class="field" title="Skip Plains/Island/Swamp/Mountain/Forest/Wastes">
+          <input id="ignoreBasicsChk" type="checkbox" checked /> Ignore basic lands
+        </label>
+        <label class="field" title="Also skip Snow-Covered basics">
+          <input id="ignoreSnowChk" type="checkbox" checked /> Ignore snow-covered basics
+        </label>
+        <button id="importDeckBtn">Import</button>
+        <div class="right"></div>
+        <button id="closeDeckBtn" class="secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help modal -->
+  <div id="helpModal" class="modal">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <h2 id="helpTitle">Help & Hotkeys</h2>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;">
+        <div>
+          <h3 style="margin:8px 0 4px;font-size:14px;">Hotkeys</h3>
+          <ul class="help-list">
+            <li><b>Arrow keys</b> – Move focus between cells</li>
+            <li><b>Ctrl/⌘+← / Ctrl/⌘+→</b> – Prev/Next page (<b>[</b>/<b>]</b> also works)</li>
+            <li><b>Home</b> – First page (Fn+← on Mac)</li>
+            <li><b>End</b> – Last page (Fn+→ on Mac)</li>
+            <li><b>N</b> – Add page</li>
+            <li><b>Shift+Delete/Backspace</b> – Remove current page (confirm)</li>
+            <li><b>Ctrl/⌘+Delete/Backspace</b> – Clear current page</li>
+            <li><b>Ctrl/⌘+Shift+Delete/Backspace</b> – Clear ALL pages</li>
+            <li><b>Alt+Arrows</b> – Reorder focused cell</li>
+            <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
+            <li><b>Delete/Backspace</b> – Clear focused cell</li>
+            <li><b>1–9</b> – Focus a cell</li>
+            <li><b>Enter</b> in card field – Add card</li>
+            <li><b>P</b> – Print all pages</li>
+            <li><b>G</b> – Toggle guides</li>
+            <li><b>M</b> – Toggle cut marks</li>
+            <li><b>?</b> or <b>H</b> or <b>F1</b> – Open this help</li>
+            <li><b>Esc</b> – Close any open dialog</li>
+          </ul>
+        </div>
+
+        <div>
+          <h3 style="margin:12px 0 4px;font-size:14px;">How it works</h3>
+          <ul class="help-list">
+            <li>Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.</li>
+            <li>To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.</li>
+            <li>Double-click a cell to replace its image.</li>
+            <li>New pages are created automatically when needed.</li>
+            <li><b>Print</b> prints all pages exact size.</li>
+          </ul>
+
+          <h3 style="margin:12px 0 4px;">Image fit: <i>Cover</i> vs <i>Contain</i></h3>
+          <ul class="help-list">
+            <li><b>Cover</b> — Scales the image so the cell is completely filled; extra edges may be cropped. Best for edge-to-edge proxies without letterboxing.</li>
+            <li><b>Contain</b> — Fits the whole image inside the cell; nothing is cropped, so you may see empty margins (“letterboxing”).</li>
+          </ul>
+
+          <h3 style="margin:12px 0 4px;">Decklist importer</h3>
+          <ul class="help-list">
+            <li>Paste one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>.</li>
+            <li>Double-faced cards use the front face.</li>
+            <li>Use the checkboxes to skip basics and Snow-Covered basics.</li>
+            <li>Images are fetched via Scryfall and placed across pages automatically; unknown cards are skipped.</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
+
+      <!-- Bottom row: Dark Mode + Advanced + Close -->
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
+        <button id="tuneBtn" class="secondary" title="Printer tuning (margins/offset)">Advanced</button>
+        <div class="right"></div>
+        <button id="closeHelpBtn" class="secondary">Close</button>
+        <div class="right footnote">© Occam Industries</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tuning modal -->
+  <div id="tuneModal" class="modal">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="tuneTitle">
+      <h2 id="tuneTitle">Printer Tuning</h2>
+      <div class="warning">⚠️ Only adjust these if your prints look clipped or misaligned. Most printers work with the defaults.</div>
+
+      <!-- Three-column grid; scale lock pinned right -->
+      <div class="panel" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;">
+        <label class="field" title="Adds extra white space above the grid so printers that can't print to the edge don't clip.">
+          Top margin (in)
+          <input id="tuneTopIn" type="number" step="0.01" min="0" value="0.25" style="width:120px">
+        </label>
+        <label class="field" title="Shifts the entire grid left/right relative to the page center. Positive = right.">
+          Horizontal offset (in)
+          <input id="tuneLeftIn" type="number" step="0.01" value="0.00" style="width:120px">
+        </label>
+        <label class="field" title="Exact card width in inches (affects grid and cut marks).">
+          Card width (in)
+          <input id="tuneCardWIn" type="number" step="0.001" min="2.400" max="2.600" style="width:120px">
+        </label>
+        <label class="field" title="Exact card height in inches (affects grid and cut marks).">
+          Card height (in)
+          <input id="tuneCardHIn" type="number" step="0.001" min="3.400" max="3.600" style="width:120px">
+        </label>
+
+        <!-- Scale lock moved to the right, spanning both input rows -->
+        <label class="field" style="grid-column: 3; grid-row: 1 / span 2; align-self:end; justify-self:end;" title="When checked, width/height stay proportional to 2.5×3.5 while you edit.">
+          <input id="tuneScaleLock" type="checkbox" checked />
+          Scale (keep 2.5×3.5 ratio)
+        </label>
+      </div>
+
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="saveTuneBtn">Save</button>
+        <button id="resetTuneBtn" class="secondary">Reset</button>
+        <div class="right"></div>
+        <button id="closeTuneBtn" class="secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /* ===== Core refs ===== */
+    var cols = 3, rows = 3, CELLS_PER_PAGE = cols*rows;
+    var pageWrap = document.getElementById('pageWrap');
+    var fileInput = document.getElementById('fileInput');
+    var printBtn = document.getElementById('printBtn');
+    var clearBtn = document.getElementById('clearBtn');
+    var clearAllBtn = document.getElementById('clearAllBtn');
+    var fitModeSelect = document.getElementById('fitMode');
+    var toggleGuides = document.getElementById('toggleGuides');
+    var toggleCutMarks = document.getElementById('toggleCutMarks');
+    var statusEl = document.getElementById('status');
+    var prevPageBtn = document.getElementById('prevPageBtn');
+    var nextPageBtn = document.getElementById('nextPageBtn');
+    var addPageBtn = document.getElementById('addPageBtn');
+    var removePageBtn = document.getElementById('removePageBtn');
+    var pageBadge = document.getElementById('pageBadge');
+    var helpBtn = document.getElementById('helpBtn');
+    var helpModal = document.getElementById('helpModal');
+    var closeHelpBtn = document.getElementById('closeHelpBtn');
+    var cardSearch = document.getElementById('cardSearch');
+    var addCardBtn = document.getElementById('addCardBtn');
+    var decklistBtn = document.getElementById('decklistBtn');
+    var deckModal = document.getElementById('deckModal');
+    var deckText = document.getElementById('deckText');
+    var importDeckBtn = document.getElementById('importDeckBtn');
+    var closeDeckBtn = document.getElementById('closeDeckBtn');
+    var ignoreBasicsChk = document.getElementById('ignoreBasicsChk');
+    var ignoreSnowChk = document.getElementById('ignoreSnowChk');
+
+    /* More refs */
+    var themeBtn = document.getElementById('themeBtn');
+    var tuneBtn = document.getElementById('tuneBtn');
+    var tuneModal = document.getElementById('tuneModal');
+    var tuneTopIn = document.getElementById('tuneTopIn');
+    var tuneLeftIn = document.getElementById('tuneLeftIn');
+    var saveTuneBtn = document.getElementById('saveTuneBtn');
+    var resetTuneBtn = document.getElementById('resetTuneBtn');
+    var closeTuneBtn = document.getElementById('closeTuneBtn');
+    var tuneCardWIn = document.getElementById('tuneCardWIn');
+    var tuneCardHIn = document.getElementById('tuneCardHIn');
+    var tuneScaleLock = document.getElementById('tuneScaleLock');
+
+    /* Ratio constants for scaling */
+    const BASE_W_IN = 2.5;
+    const BASE_H_IN = 3.5;
+
+    /* ===== Modal focus management (trap + restore) ===== */
+    let lastFocus = null;
+    function trapFocus(m){
+      const sel='button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])';
+      const f=[...m.querySelectorAll(sel)].filter(el=>!el.disabled && el.offsetParent!==null);
+      if(!f.length) return;
+      f[0].focus();
+      function onKey(e){
+        if(e.key!=='Tab') return;
+        const i=f.indexOf(document.activeElement);
+        if(e.shiftKey && i<=0){ e.preventDefault(); f[f.length-1].focus(); }
+        else if(!e.shiftKey && i===f.length-1){ e.preventDefault(); f[0].focus(); }
+      }
+      m.__trapHandler = onKey;
+      m.addEventListener('keydown', onKey);
+    }
+    function openModal(m){
+      lastFocus = document.activeElement;
+      m.classList.add('open');
+      trapFocus(m);
+    }
+    function closeModal(m){
+      m.classList.remove('open');
+      if(m.__trapHandler){ m.removeEventListener('keydown', m.__trapHandler); m.__trapHandler=null; }
+      if(lastFocus && typeof lastFocus.focus==='function'){ lastFocus.focus(); }
+    }
+
+    /* ===== inch/px helpers ===== */
+    function measurePxPerIn(){
+      var test = document.createElement('div');
+      test.style.width = '1in';
+      test.style.position='absolute';
+      test.style.visibility='hidden';
+      document.body.appendChild(test);
+      var px = test.getBoundingClientRect().width || 96;
+      document.body.removeChild(test);
+      return px;
+    }
+    var PX_PER_IN = measurePxPerIn();
+    function getPxPerIn(){ return PX_PER_IN; }
+    function refreshPxPerIn(){ var v = measurePxPerIn(); if(Math.abs(v - PX_PER_IN) > 0.5){ PX_PER_IN = v; return true; } return false; }
+
+    function computeFitDims(nw, nh, cw, ch, fit){
+      var cellAR = cw / ch; var imgAR = nw / nh; var w, h;
+      if(fit === 'cover'){ if(imgAR > cellAR){ h = ch; w = ch * imgAR; } else { w = cw; h = cw / imgAR; } }
+      else { if(imgAR > cellAR){ w = cw; h = cw / imgAR; } else { h = ch; w = ch * imgAR; } }
+      return { w: w, h: h };
+    }
+
+    function cssSizeToPx(val){
+      if(!val) return 0;
+      var v=String(val).trim();
+      if(v.endsWith('vh')){
+        var num=parseFloat(v);
+        var vh=Math.max(document.documentElement.clientHeight, window.innerHeight||0)/100;
+        return num*vh;
+      }
+      if(v.endsWith('px')) return parseFloat(v);
+      var num2=parseFloat(v);
+      return isNaN(num2)?0:num2;
+    }
+
+    /* Read inches + margins for print math */
+    function readCssInches(){
+      const cs = getComputedStyle(document.documentElement);
+      const px = getPxPerIn();
+      const pageW = parseFloat(cs.getPropertyValue('--page-w')) * px;
+      const pageH = parseFloat(cs.getPropertyValue('--page-h')) * px;
+      const cellW = parseFloat(cs.getPropertyValue('--cell-w')) * px;
+      const cellH = parseFloat(cs.getPropertyValue('--cell-h')) * px;
+
+      const gridTopIn = parseFloat(cs.getPropertyValue('--grid-top')) || 0;
+      const marginY = gridTopIn * px;
+
+      /* center the grid horizontally */
+      const marginX = (pageW - (cellW * cols)) / 2;
+
+      return { pageW, pageH, cellW, cellH, marginX, marginY, px };
+    }
+
+    /* ===== Model ===== */
+    var pages = []; // {items:Array(9), pageEl, gridEl, cells[], cutOverlayEl}
+    var currentPage = 0;
+
+    function createPage(){
+      var p = document.createElement('div'); p.className = 'page'; p.setAttribute('role','region'); p.setAttribute('aria-label','Printable page');
+      var grid = document.createElement('div'); grid.className = 'grid'; grid.setAttribute('role','grid'); grid.setAttribute('aria-label','9 image grid');
+      var cells = [];
+      for(var i=0;i<CELLS_PER_PAGE;i++){
+        var cell = document.createElement('div'); cell.className = 'cell'; cell.dataset.index = i; cell.tabIndex = 0;
+        cell.setAttribute('role','gridcell');
+        cell.setAttribute('aria-label','Empty cell ' + (i+1));
+        var ph = document.createElement('div'); ph.className = 'placeholder'; ph.textContent = 'Cell ' + (i+1); cell.appendChild(ph);
+        grid.appendChild(cell); cells.push(cell);
+      }
+      var overlay = document.createElement('div'); overlay.className = 'cut-overlay'; p.appendChild(overlay);
+      var dropHint = document.createElement('div'); dropHint.className='drop-hint'; dropHint.textContent='Drop images to place them into the grid'; p.appendChild(dropHint);
+      p.appendChild(grid);
+      pageWrap.appendChild(p);
+
+      var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, cutOverlayEl: overlay };
+      wireGridEvents(model);
+      renderCutOverlay(model);
+      return model;
+    }
+
+    function getCurrent(){ return pages[currentPage]; }
+    function showPage(idx){
+      currentPage = Math.max(0, Math.min(idx, pages.length-1));
+      pages.forEach((p,i)=>p.pageEl.classList.toggle('current', i===currentPage));
+      pageBadge.textContent = 'Page ' + (currentPage+1) + ' / ' + pages.length;
+      applyCutOverlay(); doUpdate();
+      removePageBtn.disabled = (pages.length <= 1);
+      saveState();
+    }
+
+    /* ===== Print/Preview mode switching ===== */
+    let FORCE_PRINT_MATH = false; // kept for compatibility; not used in measurement anymore
+    function refreshCutOverlays(){ pages.forEach(renderCutOverlay); }
+    const mqlPrint = window.matchMedia && window.matchMedia('print');
+    if (mqlPrint){
+      if (mqlPrint.addEventListener){
+        mqlPrint.addEventListener('change', e => {
+          FORCE_PRINT_MATH = e.matches;
+          refreshCutOverlays();
+          setTimeout(refreshCutOverlays, 50); // allow layout to settle in preview
+        });
+      } else if (mqlPrint.addListener){
+        mqlPrint.addListener(e => {
+          FORCE_PRINT_MATH = e.matches;
+          refreshCutOverlays();
+          setTimeout(refreshCutOverlays, 50);
+        });
+      }
+    }
+    window.addEventListener('beforeprint', () => {
+      FORCE_PRINT_MATH = true;
+      refreshCutOverlays();
+      setTimeout(refreshCutOverlays, 50);
+    });
+    window.addEventListener('afterprint', () => {
+      FORCE_PRINT_MATH = false;
+      refreshCutOverlays();
+    });
+    window.addEventListener('pageshow', () => { FORCE_PRINT_MATH = false; refreshCutOverlays(); doUpdate(); });
+
+    /* ===== Internal drag via PointerEvents ===== */
+    let activeDrag = null;   // {srcModel, srcIdx, ghost, lastHover}
+    let pendingDrag = null;  // threshold logic before starting
+    let duplicateKeyDown = false; // D key
+
+    function setGhostDuplicateStyle(on){
+      if(!activeDrag || !activeDrag.ghost) return;
+      activeDrag.ghost.style.outline = on ? '2px solid #60a5fa' : '';
+      activeDrag.ghost.style.boxShadow = on
+        ? '0 8px 24px rgba(37,99,235,.45)'
+        : '0 8px 24px rgba(0,0,0,.25)';
+    }
+
+    document.addEventListener('keydown', (e)=>{
+      if(e.key === 'd' || e.key === 'D'){
+        duplicateKeyDown = true; setGhostDuplicateStyle(true);
+      }
+    });
+    document.addEventListener('keyup', (e)=>{
+      if(e.key === 'd' || e.key === 'D'){
+        duplicateKeyDown = false; setGhostDuplicateStyle(false);
+      }
+    });
+
+    function resolveModelFromCellEl(el){
+      for (const m of pages){
+        const j = m.cells.indexOf(el);
+        if (j !== -1) return { model: m, index: j };
+      }
+      return null;
+    }
+
+    function makeGhostFromCell(cell){
+      const img = cell.querySelector('img');
+      const rect = (img || cell).getBoundingClientRect();
+      const ghost = document.createElement('img');
+      ghost.src = img ? img.src : '';
+      ghost.alt = '';
+      ghost.style.position='fixed';
+      ghost.style.left=rect.left+'px';
+      ghost.style.top=rect.top+'px';
+      ghost.style.width=rect.width+'px';
+      ghost.style.height=rect.height+'px';
+      ghost.style.opacity='0.85';
+      ghost.style.boxShadow='0 8px 24px rgba(0,0,0,.25)';
+      ghost.style.borderRadius='4px';
+      ghost.style.pointerEvents='none';
+      ghost.style.zIndex='9999';
+      return ghost;
+    }
+
+    function startGhostDrag(model, idx, startEvt){
+      const cell = model.cells[idx];
+      if (!model.items[idx]) return;
+      cell.classList.add('dragging');
+      const ghost = makeGhostFromCell(cell);
+      document.body.appendChild(ghost);
+      activeDrag = { srcModel: model, srcIdx: idx, ghost, lastHover: null };
+      setGhostDuplicateStyle(duplicateKeyDown);
+      moveGhostTo(startEvt.clientX, startEvt.clientY, ghost);
+      window.addEventListener('pointermove', onDragMove, { passive: false });
+      window.addEventListener('pointerup', onDragEnd, { once: true });
+      window.addEventListener('pointercancel', onDragCancel, { once: true });
+    }
+
+    function moveGhostTo(x,y, ghost){
+      const w = ghost.getBoundingClientRect().width;
+      const h = ghost.getBoundingClientRect().height;
+      ghost.style.left = (x - w/2) + 'px';
+      ghost.style.top  = (y - h/2) + 'px';
+    }
+
+    function onPointerDownCell(e, model, idx){
+      const cell = model.cells[idx];
+      cell.focus();
+
+      if (e.button !== 0) return;
+      if (!model.items[idx]) return;
+
+      e.preventDefault();
+      pendingDrag = { model, idx, sx: e.clientX, sy: e.clientY };
+
+      const onMaybeStart = (ev)=>{
+        if (!pendingDrag) return;
+        const dx = ev.clientX - pendingDrag.sx;
+        const dy = ev.clientY - pendingDrag.sy;
+        if (Math.hypot(dx,dy) >= 4){
+          window.removeEventListener('pointermove', onMaybeStart);
+          startGhostDrag(model, idx, ev);
+          pendingDrag = null;
+        }
+      };
+      const onUpCancel = ()=>{
+        window.removeEventListener('pointermove', onMaybeStart);
+        pendingDrag = null;
+      };
+      window.addEventListener('pointermove', onMaybeStart, { passive: false });
+      window.addEventListener('pointerup', onUpCancel, { once: true });
+      window.addEventListener('pointercancel', onUpCancel, { once: true });
+    }
+
+    function onDragMove(e){
+      if (!activeDrag) return;
+      e.preventDefault();
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const hover = el && el.closest && el.closest('.cell');
+      moveGhostTo(e.clientX, e.clientY, activeDrag.ghost);
+      if (activeDrag.lastHover && activeDrag.lastHover !== hover){
+        activeDrag.lastHover.classList.remove('drop-target');
+      }
+      if (hover) hover.classList.add('drop-target');
+      activeDrag.lastHover = hover || null;
+    }
+
+    function clearHover(){
+      if (activeDrag && activeDrag.lastHover){
+        activeDrag.lastHover.classList.remove('drop-target');
+        activeDrag.lastHover = null;
+      }
+    }
+
+    function finishDragCleanup(){
+      if (!activeDrag) return;
+      const srcCell = activeDrag.srcModel.cells[activeDrag.srcIdx];
+      srcCell.classList.remove('dragging');
+      clearHover();
+      if (activeDrag.ghost && activeDrag.ghost.parentNode) activeDrag.ghost.parentNode.removeChild(activeDrag.ghost);
+      activeDrag = null;
+      duplicateKeyDown = false;
+      setGhostDuplicateStyle(false);
+    }
+
+    function onDragEnd(e){
+      if (!activeDrag) return;
+
+      let hover = activeDrag.lastHover;
+      if (!hover) {
+        const at = document.elementFromPoint(e.clientX, e.clientY);
+        hover = at && at.closest ? at.closest('.cell') : null;
+      }
+
+      if (hover){
+        const dst = resolveModelFromCellEl(hover);
+        if (dst) {
+          if (duplicateKeyDown){
+            const a = activeDrag.srcModel.items[activeDrag.srcIdx];
+            if (a){
+              dst.model.items[dst.index] = { src: a.src };
+              renderCell(dst.model, dst.index);
+              saveState();
+            }
+          } else {
+            handleInternalDrop(activeDrag.srcModel, activeDrag.srcIdx, dst.model, dst.index);
+          }
+        }
+      } else {
+        if (!duplicateKeyDown){
+          const m = activeDrag.srcModel;
+          const i = activeDrag.srcIdx;
+          if (m.items[i]){ m.items[i] = null; renderCell(m, i); saveState(); }
+        }
+      }
+
+      finishDragCleanup();
+      window.removeEventListener('pointermove', onDragMove);
+    }
+
+    function onDragCancel(){
+      finishDragCleanup();
+      window.removeEventListener('pointermove', onDragMove);
+    }
+
+    /* ===== External file DnD (native) ===== */
+    function wireGridEvents(model){
+      model.cells.forEach((cell, idx) => {
+        cell.addEventListener('pointerdown', (e)=>onPointerDownCell(e, model, idx));
+        cell.addEventListener('click', ()=> cell.focus());
+
+        cell.addEventListener('dragover', (e) => {
+          const dt = e.dataTransfer;
+          const isFiles = dt && dt.types && Array.from(dt.types).includes('Files');
+          if (!isFiles) return;
+          e.preventDefault();
+          e.stopPropagation();
+          cell.classList.add('drop-target');
+          dt.dropEffect = 'copy';
+        });
+        cell.addEventListener('dragleave', (e) => {
+          e.stopPropagation();
+          cell.classList.remove('drop-target');
+        });
+        cell.addEventListener('drop', (e) => {
+          const dt = e.dataTransfer;
+          const hasFiles = dt && dt.files && dt.files.length;
+          if (!hasFiles) return;
+          e.preventDefault();
+          e.stopPropagation();
+          handleFilesIntoCell(model, idx, dt.files);
+          cell.classList.remove('drop-target');
+        });
+
+        cell.addEventListener('dblclick', function(){
+          targetIndexForFile = {page: pages.indexOf(model), index: idx};
+          fileInput.click();
+        });
+      });
+
+      ['dragenter','dragover'].forEach(function(evt){
+        model.gridEl.addEventListener(evt, function(e){
+          const dt = e.dataTransfer;
+          const isFiles = dt && dt.types && Array.from(dt.types).includes('Files');
+          if (!isFiles) return;
+          const p=model.pageEl;
+          p.classList.add('dragover');
+          e.preventDefault();
+          e.stopPropagation();
+        });
+      });
+      ['dragleave','drop'].forEach(function(evt){
+        model.gridEl.addEventListener(evt, function(e){
+          const dt = e.dataTransfer;
+          const isFiles = dt && dt.files && dt.files.length > 0;
+          if (!isFiles) return;
+          const p=model.pageEl;
+          if(evt==='drop'){
+            e.preventDefault();
+            e.stopPropagation();
+            handleFiles(dt.files);
+          } else {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          p.classList.remove('dragover');
+        });
+      });
+    }
+
+    // Move / swap logic
+    function handleInternalDrop(srcModel, srcIdx, dstModel, dstIdx){
+      if (!srcModel || !dstModel) return;
+      if (srcModel === dstModel && srcIdx === dstIdx) return;
+
+      const a = srcModel.items[srcIdx];
+      const b = dstModel.items[dstIdx];
+      if (!a) return;
+
+      if (b) {
+        srcModel.items[srcIdx] = b;
+        dstModel.items[dstIdx] = a;
+      } else {
+        srcModel.items[srcIdx] = null;
+        dstModel.items[dstIdx] = a;
+      }
+
+      renderCell(srcModel, srcIdx);
+      renderCell(dstModel, dstIdx);
+      saveState();
+    }
+
+    /* ===== Rendering ===== */
+    function fitImage(el){
+      var fit = fitModeSelect.value;
+      var nw = el.naturalWidth||el.width||1; var nh = el.naturalHeight||el.height||1;
+      const { cellW, cellH } = readCssInches();
+      var d = computeFitDims(nw, nh, cellW, cellH, fit);
+      el.style.width = d.w+'px';
+      el.style.height = d.h+'px';
+    }
+
+    function renderCell(model, i){
+      const cell = model.cells[i];
+      cell.innerHTML='';
+      const data = model.items[i];
+
+      if(!data){
+        cell.setAttribute('aria-label','Empty cell ' + (i+1));
+        const ph=document.createElement('div'); ph.className='placeholder'; ph.textContent='Cell ' + (i+1);
+        cell.appendChild(ph);
+        return;
+      }
+
+      cell.setAttribute('aria-label','Occupied cell ' + (i+1));
+      const el=document.createElement('img');
+      el.src = data.src;
+      el.draggable = false;
+      el.addEventListener('dragstart', e => e.preventDefault());
+      el.onload = function(){ fitImage(el); };
+      cell.appendChild(el);
+    }
+
+    function renderGrid(model){ for(var i=0;i<CELLS_PER_PAGE;i++) renderCell(model,i); }
+
+    /* ===== Guides & cuts ===== */
+    toggleGuides.addEventListener('change', function(){
+      var show = toggleGuides.checked;
+      document.documentElement.style.setProperty('--guide-color', show ? 'rgba(0,0,0,.25)' : 'transparent');
+    });
+
+    // NEW: Always measure actual DOM positions (screen & print) for perfect alignment
+    function renderCutOverlay(model){
+      const overlay = model.cutOverlayEl;
+
+      // Measure overlay box (page) and cells
+      const ovb = overlay.getBoundingClientRect();
+      const W = ovb.width, H = ovb.height;
+
+      if (!W || !H){
+        overlay.innerHTML = `<svg viewBox="0 0 1 1"></svg>`;
+        return;
+      }
+
+      const firstRow = model.cells.slice(0, cols);
+      const firstCol = model.cells.filter((_, i) => i % cols === 0);
+      if (!firstRow.length || !firstCol.length) {
+        overlay.innerHTML = `<svg viewBox="0 0 ${W} ${H}"></svg>`;
+        return;
+      }
+
+      // Grid bounds (relative to overlay)
+      const left   = firstRow[0].getBoundingClientRect().left  - ovb.left;
+      const right  = firstRow[firstRow.length-1].getBoundingClientRect().right - ovb.left;
+      const top    = firstCol[0].getBoundingClientRect().top   - ovb.top;
+      const bottom = firstCol[firstCol.length-1].getBoundingClientRect().bottom - ovb.top;
+
+      const cw = (right - left) / cols;
+      const ch = (bottom - top) / rows;
+
+      // Lines at every cell boundary, including outer edges
+      const xs = [];
+      for (let i = 0; i <= cols; i++) xs.push(left + i * cw);
+      const ys = [];
+      for (let j = 0; j <= rows; j++) ys.push(top + j * ch);
+
+      overlay.innerHTML =
+        `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">
+           <g stroke="#9ca3af" stroke-width="1" fill="none">
+             ${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${H}"/>`).join('')}
+             ${ys.map(y=>`<line x1="0" y1="${y}" x2="${W}" y2="${y}"/>`).join('')}
+           </g>
+         </svg>`;
+    }
+
+    function applyCutOverlay(){
+      pages.forEach(m=>m.pageEl.classList.toggle('show-cuts', toggleCutMarks.checked));
+      pages.forEach(renderCutOverlay); // rebuild when toggled
+    }
+    toggleCutMarks.addEventListener('change', applyCutOverlay);
+
+    // Rebuild overlays on layout changes
+    function doUpdate(){
+      refreshPxPerIn();
+      const cur = getCurrent();
+      if (cur) cur.gridEl.querySelectorAll('img').forEach(img=>fitImage(img));
+      updatePreviewScale();
+      if (cur) { renderCutOverlay(cur); }
+    }
+
+    /* ===== Files & placement ===== */
+    var targetIndexForFile = null; // {page,index}
+    function placeImage(model, idx, src){ model.items[idx] = {src: src}; renderCell(model, idx); saveState(); }
+
+    fileInput.addEventListener('change', function(e){
+      var selected = Array.from(e.target.files||[]).filter(f=>f.type.indexOf('image/')===0);
+      if(targetIndexForFile && selected.length){
+        assignFileToIndex(selected[0], targetIndexForFile.page, targetIndexForFile.index);
+        targetIndexForFile=null;
+      } else {
+        handleFiles(selected);
+      }
+      fileInput.value='';
+    });
+
+    ['dragenter','dragover'].forEach(function(evt){
+      pageWrap.addEventListener(evt, function(e){
+        const dt = e.dataTransfer;
+        const isFiles = dt && dt.types && Array.from(dt.types).includes('Files');
+        if (!isFiles) return;
+        const p=getCurrent().pageEl;
+        p.classList.add('dragover');
+        e.preventDefault();
+        e.stopPropagation();
+      });
+    });
+    ['dragleave','drop'].forEach(function(evt){
+      pageWrap.addEventListener(evt, function(e){
+        const dt = e.dataTransfer;
+        const isFiles = dt && dt.files && dt.files.length > 0;
+        if (!isFiles) return;
+        const p=getCurrent().pageEl;
+        if(evt==='drop'){
+          e.preventDefault();
+          e.stopPropagation();
+          handleFiles(dt.files);
+        } else {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        p.classList.remove('dragover');
+      });
+    });
+
+    function assignFileToIndex(file, pageIdx, cellIdx){
+      var reader = new FileReader();
+      reader.onload = function(){
+        var img=new Image();
+        img.onload=function(){ var model=pages[pageIdx]; placeImage(model, cellIdx, img.src); };
+        img.src=reader.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function nextEmptySlot(startPage){ if(startPage==null) startPage=0; for(var p=startPage;p<pages.length;p++){ var model=pages[p]; var idx=model.items.findIndex(x=>x==null); if(idx!==-1) return {page:p, index: idx}; } return null; }
+
+    function nextEmptySlotFrom(start){
+      var p = start && typeof start.page==='number' ? start.page : 0;
+      var i = start && typeof start.index==='number' ? start.index : 0;
+      for(var page=p; page<pages.length; page++){
+        var m = pages[page];
+        for(var idx=(page===p?i:0); idx<CELLS_PER_PAGE; idx++){
+          if(m.items[idx]==null) return {page: page, index: idx};
+        }
+      }
+      return null;
+    }
+
+    function ensurePageForAppend(){
+      var slot = nextEmptySlot(0);
+      if(slot) return slot;
+      var m=createPage(); pages.push(m); showPage(pages.length-1); saveState();
+      return {page: pages.length-1, index: 0};
+    }
+
+    function handleFilesIntoCell(model, targetIdx, fileList){
+      var files = Array.from(fileList||[]).filter(f=>f.type && f.type.indexOf('image/')===0);
+      if(files.length===0) return;
+      var pageIdx = pages.indexOf(model);
+      var pos = {page: pageIdx, index: targetIdx};
+      var q = files.slice();
+      var loop = function(){
+        if(q.length===0) return;
+        var f = q.shift();
+        var reader = new FileReader();
+        reader.onload = function(){
+          var img = new Image();
+          img.onload = function(){
+            var m = pages[pos.page];
+            placeImage(m, pos.index, img.src);
+            var next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
+            pos = next; loop();
+          };
+          img.src = reader.result;
+        };
+        reader.readAsDataURL(f);
+      };
+      loop();
+    }
+
+    function handleFiles(fileList){
+      var files = Array.from(fileList).filter(f=>f.type.indexOf('image/')===0);
+      if(files.length===0) return;
+      var pos = nextEmptySlot(currentPage) || ensurePageForAppend();
+      var loop = function(){
+        if(files.length===0) return;
+        var f=files.shift();
+        var reader=new FileReader();
+        reader.onload=function(){
+          var img=new Image();
+          img.onload=function(){
+            var m=pages[pos.page];
+            placeImage(m, pos.index, img.src);
+            var startFrom = (pos.index+1>=CELLS_PER_PAGE)? pos.page+1 : pos.page;
+            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+            loop();
+          };
+          img.src=reader.result;
+        };
+        reader.readAsDataURL(f);
+      };
+      loop();
+    }
+
+    /* ===== Pager & Clear helpers ===== */
+    function addPage(){ pages.push(createPage()); showPage(pages.length-1); saveState(); }
+
+    function removeCurrentPage(forceConfirm){
+      if(pages.length <= 1){ alert('Cannot remove the last page.'); return false; }
+      var m = getCurrent();
+      var hasContent = m.items.some(Boolean);
+      if (forceConfirm){
+        if(!confirm('Remove the current page? This cannot be undone.')) return false;
+      } else if(hasContent){
+        if(!confirm('This page has images. Remove it?')) return false;
+      }
+      var idx = currentPage;
+      pageWrap.removeChild(m.pageEl);
+      pages.splice(idx, 1);
+      showPage(Math.min(idx, pages.length - 1));
+      saveState();
+      return true;
+    }
+
+    function clearCurrentPage(){
+      var m=getCurrent();
+      m.items = new Array(CELLS_PER_PAGE).fill(null);
+      renderGrid(m);
+      saveState();
+      setStatus('Cleared current page');
+    }
+
+    function clearAllPages(forceConfirm){
+      const hasAny = pages.some(p => p.items.some(Boolean));
+      const msg = 'Delete ALL pages and images? This cannot be undone.';
+      if (forceConfirm || hasAny){
+        if(!confirm(msg)) return;
+      }
+      try{ localStorage.removeItem('mtgProxyPages'); }catch(_){}
+      pageWrap.innerHTML = '';
+      pages.length = 0;
+      const m = createPage();
+      pages.push(m);
+      renderGrid(m);
+      showPage(0);
+      setStatus('Cleared ALL pages');
+    }
+
+    prevPageBtn.addEventListener('click', function(){ showPage(Math.max(0, currentPage-1)); });
+    nextPageBtn.addEventListener('click', function(){ showPage(Math.min(pages.length-1, currentPage+1)); });
+    addPageBtn.addEventListener('click', addPage);
+    removePageBtn.addEventListener('click', function(){ removeCurrentPage(false); });
+
+    clearBtn.addEventListener('click', clearCurrentPage);
+    clearAllBtn.addEventListener('click', function(){ clearAllPages(true); });
+
+    printBtn.addEventListener('click', function(){
+      pages.forEach(p => p.pageEl.offsetHeight);
+      window.print();
+    });
+
+    /* ===== Preview sizing (reads CSS page vars) ===== */
+    function updatePreviewScale(){
+      var header=document.querySelector('header');
+      var controls=document.querySelector('.controls');
+      var app=document.querySelector('.app');
+      var headerH=header?header.getBoundingClientRect().height:0;
+      var controlsH=controls?controls.getBoundingClientRect().height:0;
+      var rowGap=app?parseFloat(getComputedStyle(app).rowGap)||0:0;
+      var appGaps=rowGap*2;
+      var bottomGapVar=getComputedStyle(document.documentElement).getPropertyValue('--preview-bottom-gap')||'5vh';
+      var bottomGapPx=cssSizeToPx(bottomGapVar);
+      var availH=Math.max(0, window.innerHeight-headerH-controlsH-appGaps-bottomGapPx);
+      var availW=Math.max(0, window.innerWidth);
+      var pxPerIn = getPxPerIn();
+
+      const cs = getComputedStyle(document.documentElement);
+      const pageWpx = parseFloat(cs.getPropertyValue('--page-w')) * pxPerIn;
+      const pageHpx = parseFloat(cs.getPropertyValue('--page-h')) * pxPerIn;
+
+      var scale=Math.min(availW/pageWpx, availH/pageHpx, 1);
+      document.documentElement.style.setProperty('--preview-scale', String(scale>0?scale:1));
+    }
+
+    function debounce(fn, ms){ var t; return function(){ clearTimeout(t); t=setTimeout(fn, ms); }; }
+    const debouncedUpdate = debounce(doUpdate, 100);
+
+    window.addEventListener('resize', debouncedUpdate);
+    window.addEventListener('orientationchange', debouncedUpdate);
+    document.addEventListener('fullscreenchange', debouncedUpdate);
+    document.addEventListener('visibilitychange', function(){ if(!document.hidden) debouncedUpdate(); });
+    const ro = new ResizeObserver(()=>debouncedUpdate());
+    ro.observe(document.documentElement);
+
+    /* ===== Keyboard A11y & Hotkeys ===== */
+    document.addEventListener('keydown', function(e){
+      const tag = (e.target && e.target.tagName) || '';
+      const typing = /INPUT|TEXTAREA|SELECT/.test(tag);
+      if(typing){
+        if(e.key==='Enter' && e.target===cardSearch){ e.preventDefault(); addCardBtn.click(); }
+        return;
+      }
+
+      if(e.key==='F1' || e.key==='?' || e.key==='h' || e.key==='H'){ e.preventDefault(); openModal(helpModal); return; }
+
+      if(e.key==='p' || e.key==='P'){ e.preventDefault(); printBtn.click(); return; }
+      if(e.key==='g' || e.key==='G'){ toggleGuides.checked=!toggleGuides.checked; toggleGuides.dispatchEvent(new Event('change')); return; }
+      if(e.key==='m' || e.key==='M'){ toggleCutMarks.checked=!toggleCutMarks.checked; applyCutOverlay(); return; }
+
+      if(e.key==='Home'){ e.preventDefault(); showPage(0); return; }
+      if(e.key==='End'){ e.preventDefault(); showPage(pages.length-1); return; }
+
+      if((e.ctrlKey || e.metaKey) && (e.key==='ArrowLeft' || e.key==='ArrowRight')){
+        e.preventDefault();
+        if(e.key==='ArrowLeft') showPage(Math.max(0, currentPage-1));
+        else showPage(Math.min(pages.length-1, currentPage+1));
+        return;
+      }
+      if(e.key==='['){ e.preventDefault(); showPage(Math.max(0, currentPage-1)); return; }
+      if(e.key===']'){ e.preventDefault(); showPage(Math.min(pages.length-1, currentPage+1)); return; }
+
+      if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key) && !e.altKey && !e.ctrlKey && !e.metaKey){
+        const m = getCurrent();
+        const cell = document.activeElement?.closest?.('.cell') || m.cells[0];
+        const i = Number(cell.dataset.index || 0);
+        let j = i;
+        if (e.key==='ArrowLeft'  && (i%cols)>0) j = i-1;
+        if (e.key==='ArrowRight' && (i%cols)<cols-1) j = i+1;
+        if (e.key==='ArrowUp'    && i-cols>=0) j = i-cols;
+        if (e.key==='ArrowDown'  && i+cols<CELLS_PER_PAGE) j = i+cols;
+        if (j !== i){
+          e.preventDefault();
+          m.cells[j].focus();
+        }
+        return;
+      }
+
+      if(e.key==='n' || e.key==='N'){ e.preventDefault(); addPage(); return; }
+
+      const isDel = (e.key==='Delete' || e.key==='Backspace');
+
+      if((e.ctrlKey || e.metaKey) && e.shiftKey && isDel){
+        e.preventDefault();
+        clearAllPages(true);
+        return;
+      }
+
+      if((e.ctrlKey || e.metaKey) && !e.shiftKey && isDel){
+        e.preventDefault();
+        clearCurrentPage();
+        return;
+      }
+
+      if(e.shiftKey && !e.ctrlKey && !e.metaKey && isDel){
+        e.preventDefault();
+        removeCurrentPage(true);
+        return;
+      }
+
+      if(isDel){
+        const el = document.activeElement;
+        const cell = el && el.classList && el.classList.contains('cell') ? el : null;
+        if(cell){
+          const idx = Number(cell.dataset.index);
+          const m = getCurrent();
+          m.items[idx] = null; renderCell(m, idx); saveState();
+          e.preventDefault();
+          return;
+        }
+      }
+
+      if(e.altKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
+        const cell = document.activeElement?.closest?.('.cell');
+        if(!cell) return;
+        const i = Number(cell.dataset.index);
+        const m = getCurrent();
+        let j = i;
+        if (e.key==='ArrowLeft' && (i%cols)>0) j=i-1;
+        if (e.key==='ArrowRight' && (i%cols)<cols-1) j=i+1;
+        if (e.key==='ArrowUp' && i-cols>=0) j=i-cols;
+        if (e.key==='ArrowDown' && i+cols<CELLS_PER_PAGE) j=i+cols;
+        if (j!==i){
+          handleInternalDrop(m, i, m, j);
+          m.cells[j].focus();
+          saveState();
+          e.preventDefault();
+        }
+      }
+
+      if(/^([1-9])$/.test(e.key)){
+        const n = parseInt(e.key,10)-1;
+        const cell = getCurrent().cells[n]; if(cell){ cell.focus(); }
+        return;
+      }
+    });
+
+    /* ===== Help/Deck/Tune modal binds ===== */
+    closeHelpBtn.addEventListener('click', ()=>closeModal(helpModal));
+    helpBtn.addEventListener('click', ()=>openModal(helpModal));
+
+    decklistBtn.addEventListener('click', function(){ openModal(deckModal); deckText.focus(); });
+    closeDeckBtn.addEventListener('click', function(){ closeModal(deckModal); });
+
+    /* Decklist: Import button wiring */
+    if (importDeckBtn) {
+      const runImport = async () => {
+        const text = (deckText.value || '').trim();
+        if (!text) {
+          setStatus('Paste a decklist first');
+          deckText.focus();
+          return;
+        }
+        importDeckBtn.disabled = true;
+        const prevLabel = importDeckBtn.textContent;
+        importDeckBtn.textContent = 'Importing…';
+        try {
+          await importDecklist(text);
+          closeModal(deckModal);
+          setStatus('Decklist imported');
+        } catch (err) {
+          console.error(err);
+          setStatus('Error importing deck: ' + (err && err.message ? err.message : err));
+        } finally {
+          importDeckBtn.disabled = false;
+          importDeckBtn.textContent = prevLabel;
+        }
+      };
+
+      importDeckBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        runImport();
+      });
+
+      // Ctrl/⌘+Enter from textarea
+      deckText.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          runImport();
+        }
+      });
+    }
+
+    /* ===== Width/Height scale lock syncing ===== */
+    function syncFromWidth(){
+      if (!tuneScaleLock || !tuneScaleLock.checked) return;
+      const w = parseFloat(tuneCardWIn.value);
+      if (!isFinite(w) || w <= 0) return;
+      const s = w / BASE_W_IN;
+      const h = s * BASE_H_IN;
+      tuneCardHIn.value = h.toFixed(4);
+    }
+    function syncFromHeight(){
+      if (!tuneScaleLock || !tuneScaleLock.checked) return;
+      const h = parseFloat(tuneCardHIn.value);
+      if (!isFinite(h) || h <= 0) return;
+      const s = h / BASE_H_IN;
+      const w = s * BASE_W_IN;
+      tuneCardWIn.value = w.toFixed(4);
+    }
+
+    if (tuneCardWIn){
+      tuneCardWIn.addEventListener('input',  syncFromWidth);
+      tuneCardWIn.addEventListener('change', syncFromWidth);
+    }
+    if (tuneCardHIn){
+      tuneCardHIn.addEventListener('input',  syncFromHeight);
+      tuneCardHIn.addEventListener('change', syncFromHeight);
+    }
+
+    /* ===== Basics filtering ===== */
+    var BASE_FIVE = new Set(['plains','island','swamp','mountain','forest']);
+    var BASIC_BASENAMES = new Set(Array.from(BASE_FIVE).concat(['wastes']));
+
+    function normalizeCardName(raw){
+      var s = String(raw).trim();
+      s = s.replace(/\s*(?:\[[^\]]+\]|\([^)]+\))\s*$/,'').trim();
+      return s.toLowerCase();
+    }
+    function isBasic(name){ return BASIC_BASENAMES.has(normalizeCardName(name)); }
+    function isSnowCoveredBasic(name){
+      var s = normalizeCardName(name);
+      if (s.indexOf('snow-covered ') !== 0) return false;
+      var base = s.slice('snow-covered '.length);
+      return BASE_FIVE.has(base);
+    }
+    function filterBasics(list, ignoreBasics, ignoreSnow){
+      return list.filter(function(n){
+        if (ignoreBasics && isBasic(n)) return false;
+        if (ignoreSnow && isSnowCoveredBasic(n)) return false;
+        return true;
+      });
+    }
+
+    /* ===== Scryfall (search & decklist) ===== */
+    const scryCache = new Map();
+
+    function splitNameAndSet(raw){
+      let s = String(raw).trim();
+      const qm = s.match(/^(\d+)\s*x?\s+(.+)$/i);
+      if (qm) s = qm[2];
+      let set = null, name = s;
+      const m1 = s.match(/\s*\[([A-Za-z0-9]{2,5})\]\s*$/);
+      const m2 = s.match(/\s*\(([A-Za-z0-9]{2,5})\)\s*$/);
+      if (m1){ set = m1[1]; name = s.slice(0, m1.index).trim(); }
+      else if (m2){ set = m2[1]; name = s.slice(0, m2.index).trim(); }
+      return { name, set };
+    }
+
+    async function fetchCardByName(name){
+      const { name: base, set } = splitNameAndSet(name);
+      var url = set
+        ? 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base)+'&set='+encodeURIComponent(set)
+        : 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base);
+      var r = await fetch(url); if(!r.ok) throw new Error('Not found: '+name); var data = await r.json();
+      var src = (data.image_uris && (data.image_uris.png || data.image_uris.large || data.image_uris.normal)) || null;
+      if(!src && data.card_faces && data.card_faces.length){
+        var cf=data.card_faces[0];
+        src = (cf.image_uris && (cf.image_uris.png || cf.image_uris.large || cf.image_uris.normal)) || src;
+      }
+      if(!src) throw new Error('No image for: '+name);
+      return src;
+    }
+
+    async function addCardByName(name){
+      try{
+        setStatus('Fetching: '+name);
+        const key = name.toLowerCase();
+        const src = scryCache.get(key) || await fetchCardByName(name);
+        scryCache.set(key, src);
+        await addImageSrcToNextCell(src);
+        setStatus('Added');
+      } catch(err){ console.error(err); setStatus('Error: '+err.message); }
+    }
+
+    function parseDecklist(text){
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      const out = [];
+      for (let line of lines){
+        if (/^(sideboard|companions?|commander)\s*:?\s*$/i.test(line)) continue;
+        const m = line.match(/^(\d+)\s*x?\s+(.+)$/i);
+        if (m){
+          const cnt = parseInt(m[1],10);
+          const name = m[2].trim();
+          for (let j=0;j<cnt;j++) out.push(name);
+        } else {
+          out.push(line);
+        }
+      }
+      return out;
+    }
+
+    async function addImageSrcToNextCell(src){
+      var pos = nextEmptySlot(currentPage) || ensurePageForAppend();
+      var m=pages[pos.page];
+      placeImage(m, pos.index, src);
+    }
+
+    async function fetchManyByName(names){
+      const results = new Map();
+      const toFetch = [];
+      for (const original of names){
+        const key = original.toLowerCase();
+        if (scryCache.has(key)) {
+          results.set(original, scryCache.get(key));
+          continue;
+        }
+        const { name, set } = splitNameAndSet(original);
+        toFetch.push({ original, identifier: set ? { name, set: set.toLowerCase() } : { name } });
+      }
+      for (let i=0;i<toFetch.length;i+=75){
+        const chunk = toFetch.slice(i, i+75);
+        let data = null;
+        try{
+          const r = await fetch('https://api.scryfall.com/cards/collection', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json' },
+            body: JSON.stringify({ identifiers: chunk.map(x=>x.identifier) })
+          });
+          if (r.ok) data = await r.json();
+        }catch(_){}
+        if (!data || !Array.isArray(data.data)) {
+          for (const item of chunk){
+            try{
+              const src = await fetchCardByName(item.original);
+              results.set(item.original, src);
+            }catch(_){}
+          }
+          continue;
+        }
+        let di = 0;
+        for (let j=0;j<chunk.length;j++){
+          const req = chunk[j];
+          const card = data.data[di];
+          const wantName = (req.identifier.name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+          const wantSet = req.identifier.set ? req.identifier.set.toLowerCase() : null;
+          let matched = false;
+          if (card){
+            const gotName = (card.name || card.printed_name || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+            const gotSet  = (card.set || '').toLowerCase();
+            if (gotName === wantName && (!wantSet || gotSet === wantSet)) {
+              let src =
+                (card.image_uris && (card.image_uris.png || card.image_uris.large || card.image_uris.normal)) ||
+                (card.card_faces && card.card_faces[0] && (card.card_faces[0].image_uris?.png || card.card_faces[0].image_uris?.large || card.card_faces[0].image_uris?.normal)) ||
+                null;
+              if (src){
+                results.set(req.original, src);
+                scryCache.set(req.original.toLowerCase(), src);
+              }
+              matched = true;
+              di++;
+            }
+          }
+          if (!matched){
+            try{
+              const src = await fetchCardByName(req.original);
+              results.set(req.original, src);
+              scryCache.set(req.original.toLowerCase(), src);
+            }catch(_){}
+          }
+        }
+      }
+      return results;
+    }
+
+    async function importDecklist(text){
+      const namesAll = parseDecklist(text);
+      const ignoreBasics = !!(ignoreBasicsChk && ignoreBasicsChk.checked);
+      const ignoreSnow = !!(ignoreSnowChk && ignoreSnowChk.checked);
+      const names = filterBasics(namesAll, ignoreBasics, ignoreSnow);
+      setStatus('Fetching deck images…');
+
+      const mapping = await fetchManyByName(names);
+      let placed = 0, missing = 0;
+      for (const n of names){
+        const src = mapping.get(n) || scryCache.get(n.toLowerCase());
+        if (!src) { console.warn('No image for', n); missing++; continue; }
+        await addImageSrcToNextCell(src);
+        setStatus(`(${++placed}/${names.length}) ${n}`);
+      }
+      setStatus(missing ? `Done — ${missing} not found` : 'Done');
+      showPage(currentPage);
+    }
+
+    addCardBtn.addEventListener('click', function(){
+      var name=cardSearch.value.trim();
+      if(name){ addCardByName(name); cardSearch.select(); }
+    });
+
+    /* ===== Status & persistence ===== */
+    let statusTimer = null;
+    function setStatus(msg){ clearTimeout(statusTimer); statusTimer = setTimeout(()=>{ statusEl.textContent = msg||'Ready'; }, 16); }
+
+    function saveState(){
+      try{
+        const state = { pages: pages.map(p => p.items), current: currentPage };
+        localStorage.setItem('mtgProxyPages', JSON.stringify(state));
+      }catch(_){}
+    }
+    function loadState(){
+      try{
+        const raw = localStorage.getItem('mtgProxyPages');
+        if (!raw) return false;
+        const state = JSON.parse(raw);
+        if (!state || !Array.isArray(state.pages) || !state.pages.length) return false;
+        pageWrap.innerHTML = ''; pages.length = 0;
+        for (let i=0;i<state.pages.length;i++){
+          const m = createPage(); pages.push(m); m.items = state.pages[i]; renderGrid(m);
+        }
+        showPage(Math.min(Math.max(0, state.current||0), pages.length-1));
+        return true;
+      }catch(_){ return false; }
+    }
+
+    /* ===== Theme + Tuning ===== */
+    function setDark(on){
+      if(on){
+        document.documentElement.setAttribute('data-theme','dark');
+        localStorage.setItem('mtgThemeDark','1');
+        if (themeBtn){ themeBtn.textContent='☀️'; themeBtn.title='Switch to light mode'; }
+      }else{
+        document.documentElement.removeAttribute('data-theme');
+        localStorage.setItem('mtgThemeDark','0');
+        if (themeBtn){ themeBtn.textContent='🌙'; themeBtn.title='Switch to dark mode'; }
+      }
+    }
+    function loadTheme(){
+      var on = localStorage.getItem('mtgThemeDark') === '1';
+      setDark(on);
+    }
+    if (themeBtn){
+      themeBtn.addEventListener('click', function(){
+        var nowDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        setDark(!nowDark);
+      });
+    }
+
+    function readInchesVar(name, fallback){
+      var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      var m = /(-?\d*\.?\d+)in/.exec(v);
+      return m ? parseFloat(m[1]) : (fallback||0);
+    }
+
+    function applyTuning(topIn, leftIn, cardWIn, cardHIn){
+      // sanitize
+      topIn   = Math.max(0, Number(topIn)  || 0);
+      leftIn  = Number(leftIn) || 0;
+      cardWIn = Number(cardWIn) || readInchesVar('--cell-w', BASE_W_IN);
+      cardHIn = Number(cardHIn) || readInchesVar('--cell-h', BASE_H_IN);
+
+      // apply CSS custom properties (in inches so readCssInches() stays exact)
+      document.documentElement.style.setProperty('--grid-top', topIn.toFixed(2)+'in');
+      document.documentElement.style.setProperty('--grid-left', leftIn.toFixed(2)+'in');
+      document.documentElement.style.setProperty('--cell-w', cardWIn.toFixed(4)+'in');
+      document.documentElement.style.setProperty('--cell-h', cardHIn.toFixed(4)+'in');
+
+      // persist (merge with any existing fields like scaleLock)
+      try{
+        const prev = JSON.parse(localStorage.getItem('mtgTuning') || '{}');
+        prev.topIn = topIn; prev.leftIn = leftIn; prev.cardWIn = cardWIn; prev.cardHIn = cardHIn;
+        localStorage.setItem('mtgTuning', JSON.stringify(prev));
+      }catch(_){}
+
+      // reflow: cut overlay + image fits use these values
+      pages.forEach(renderCutOverlay);
+      doUpdate();
+    }
+
+    function loadTuning(){
+      try{
+        var raw = localStorage.getItem('mtgTuning');
+        if(raw){
+          var t = JSON.parse(raw)||{};
+          applyTuning(
+            (typeof t.topIn   !== 'undefined') ? t.topIn   : readInchesVar('--grid-top', .25),
+            (typeof t.leftIn  !== 'undefined') ? t.leftIn  : readInchesVar('--grid-left', 0),
+            (typeof t.cardWIn !== 'undefined') ? t.cardWIn : readInchesVar('--cell-w', 2.4750),
+            (typeof t.cardHIn !== 'undefined') ? t.cardHIn : readInchesVar('--cell-h', 3.4650)
+          );
+          if (tuneScaleLock){
+            tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
+          }
+        }
+      }catch(_){}
+    }
+
+    function openTune(){
+      tuneTopIn.value   = readInchesVar('--grid-top', .25).toFixed(2);
+      tuneLeftIn.value  = readInchesVar('--grid-left', 0).toFixed(2);
+      tuneCardWIn.value = readInchesVar('--cell-w', 2.4750).toFixed(4);
+      tuneCardHIn.value = readInchesVar('--cell-h', 3.4650).toFixed(4);
+
+      try{
+        const t = JSON.parse(localStorage.getItem('mtgTuning') || '{}');
+        if (tuneScaleLock) tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
+      }catch(_){
+        if (tuneScaleLock) tuneScaleLock.checked = true;
+      }
+
+      openModal(tuneModal);
+      tuneTopIn.focus();
+    }
+
+    if (tuneBtn){ tuneBtn.addEventListener('click', openTune); }
+
+    if (saveTuneBtn){
+      saveTuneBtn.addEventListener('click', function(){
+        let w = parseFloat(tuneCardWIn.value);
+        let h = parseFloat(tuneCardHIn.value);
+
+        // If locked, enforce 2.5×3.5 ratio using whichever field is valid
+        if (tuneScaleLock && tuneScaleLock.checked){
+          if (isFinite(w) && w > 0){
+            const s = w / BASE_W_IN;
+            h = +(s * BASE_H_IN).toFixed(4);
+            tuneCardHIn.value = h.toFixed(4);
+          } else if (isFinite(h) && h > 0){
+            const s = h / BASE_H_IN;
+            w = +(s * BASE_W_IN).toFixed(4);
+            tuneCardWIn.value = w.toFixed(4);
+          }
+        }
+
+        applyTuning(
+          parseFloat(tuneTopIn.value),
+          parseFloat(tuneLeftIn.value),
+          w,
+          h
+        );
+
+        // Persist scaleLock merged with other tuning
+        try{
+          const prev = JSON.parse(localStorage.getItem('mtgTuning') || '{}');
+          prev.scaleLock = !!(tuneScaleLock && tuneScaleLock.checked);
+          localStorage.setItem('mtgTuning', JSON.stringify(prev));
+        }catch(_){}
+
+        closeModal(tuneModal);
+      });
+    }
+
+    if (resetTuneBtn){
+      resetTuneBtn.addEventListener('click', function(){
+        tuneTopIn.value   = '0.25';
+        tuneLeftIn.value  = '0.00';
+        tuneCardWIn.value = '2.4750';
+        tuneCardHIn.value = '3.4650';
+        if (tuneScaleLock) tuneScaleLock.checked = true;
+      });
+    }
+
+    if (closeTuneBtn){
+      closeTuneBtn.addEventListener('click', function(){
+        closeModal(tuneModal);
+      });
+    }
+
+    /* Close any modal with Esc or by clicking the backdrop (restore focus) */
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape'){
+        var open = document.querySelector('.modal.open');
+        if (open){ e.preventDefault(); closeModal(open); }
+      }
+    });
+    Array.from(document.querySelectorAll('.modal')).forEach(function(m){
+      m.addEventListener('click', function(e){
+        if (e.target === m){ closeModal(m); }
+      });
+    });
+
+    /* ===== Init ===== */
+    pages.push(createPage());
+    renderGrid(pages[0]);
+    if (!loadState()) showPage(0);
+    applyCutOverlay(); doUpdate();
+    loadTheme();
+    loadTuning();
+
+    // Expose for debugging
+    window.__mtgDebug = { pages };
+  </script>
+</body>
+</html>
