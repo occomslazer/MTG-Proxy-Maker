@@ -1829,15 +1829,23 @@
 
       const mapping = await fetchManyByName(names);
       let placed = 0, missing = 0;
+      const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
+      let batchCount = 0;
       for (const n of names){
         const found = mapping.get(n) || scryCache.get(n.toLowerCase());
         const images = normalizeCardImages(found);
         if (!images || !images.front) { console.warn('No image for', n); missing++; continue; }
         await addImageSrcToNextCell(images.front);
+        batchCount++;
         if (includeBacks && images.back){
           await addImageSrcToNextCell(images.back);
+          batchCount++;
         }
         setStatus(`(${++placed}/${names.length}) ${n}`);
+        if (batchCount >= 16){
+          batchCount = 0;
+          await new Promise(r => pause(r, 0));
+        }
       }
       setStatus(missing ? `Done — ${missing} not found` : 'Done');
       showPage(currentPage);
