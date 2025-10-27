@@ -644,7 +644,7 @@
 
       var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, cutOverlayEl: overlay };
       wireGridEvents(model);
-      renderCutOverlay(model);
+      queueCutOverlay(model);
       return model;
     }
 
@@ -660,7 +660,7 @@
 
     /* ===== Print/Preview mode switching ===== */
     let FORCE_PRINT_MATH = false; // kept for compatibility; not used in measurement anymore
-    function refreshCutOverlays(){ pages.forEach(renderCutOverlay); }
+    function refreshCutOverlays(){ pages.forEach(queueCutOverlay); }
     const mqlPrint = window.matchMedia && window.matchMedia('print');
     if (mqlPrint){
       if (mqlPrint.addEventListener){
@@ -1032,9 +1032,14 @@
          </svg>`;
     }
 
+    function queueCutOverlay(model){
+      if (!model) return;
+      requestAnimationFrame(() => requestAnimationFrame(() => renderCutOverlay(model)));
+    }
+
     function applyCutOverlay(){
       pages.forEach(m=>m.pageEl.classList.toggle('show-cuts', toggleCutMarks.checked));
-      pages.forEach(renderCutOverlay); // rebuild when toggled
+      pages.forEach(queueCutOverlay); // rebuild when toggled
     }
     toggleCutMarks.addEventListener('change', applyCutOverlay);
 
@@ -1044,7 +1049,7 @@
       const cur = getCurrent();
       if (cur) cur.gridEl.querySelectorAll('img').forEach(img=>fitImage(img));
       updatePreviewScale();
-      if (cur) { renderCutOverlay(cur); }
+      if (cur) { queueCutOverlay(cur); }
     }
 
     /* ===== Files & placement ===== */
@@ -1923,7 +1928,7 @@
       }catch(_){}
 
       // reflow: cut overlay + image fits use these values
-      pages.forEach(renderCutOverlay);
+      pages.forEach(queueCutOverlay);
       doUpdate();
     }
 
