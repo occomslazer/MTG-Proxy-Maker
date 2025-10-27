@@ -63,6 +63,8 @@
       transform-origin: top left;
       transform: scale(var(--preview-scale));
       margin: 0;
+      content-visibility: auto;
+      contain-intrinsic-size: 1100px 1400px;
     }
     .page:not(.current) { display: none; }
 
@@ -76,7 +78,7 @@
     .show-cuts .cut-overlay { opacity: 1; }
     .show-cuts .cell { border-color: transparent !important; }
 
-    .cell { width: var(--cell-w); height: var(--cell-h); border: 0.5pt dashed var(--guide-color); background: #f9fafb; position: relative; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; }
+    .cell { width: var(--cell-w); height: var(--cell-h); border: 0.5pt dashed var(--guide-color); background: #f9fafb; position: relative; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; contain: layout paint size; }
     .cell img { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: none; image-rendering: auto; -webkit-user-drag: none; user-select: none; }
     .cell .placeholder{ color: #9ca3af; font-size: 12px; text-align: center; padding: 8px; user-select: none; }
 
