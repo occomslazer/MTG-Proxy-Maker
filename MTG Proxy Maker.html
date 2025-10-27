@@ -987,6 +987,33 @@
       });
     });
 
+    document.addEventListener('paste', function(e){
+      const active = document.activeElement;
+      if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+
+      const cd = e.clipboardData;
+      if(!cd) return;
+
+      const files = [];
+
+      if(cd.files && cd.files.length){
+        Array.from(cd.files).forEach(function(file){
+          if(file && file.type && file.type.indexOf('image/') === 0){ files.push(file); }
+        });
+      } else if(cd.items && cd.items.length){
+        Array.from(cd.items).forEach(function(item){
+          if(!item || item.kind !== 'file') return;
+          const file = item.getAsFile();
+          if(file && file.type && file.type.indexOf('image/') === 0){ files.push(file); }
+        });
+      }
+
+      if(!files.length) return;
+
+      e.preventDefault();
+      handleFiles(files);
+    });
+
     function assignFileToIndex(file, pageIdx, cellIdx){
       var reader = new FileReader();
       reader.onload = function(){
