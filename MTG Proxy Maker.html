@@ -153,9 +153,102 @@
       .cell .placeholder{ display: none !important; }
       .cell::after{ display:none !important; }
       .drop-hint{ display:none !important; }
+      .ctx-menu { display: none !important; }
 
       img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
+
+    /* ===== Context Menu ===== */
+    .ctx-menu {
+      position: fixed;
+      top: 0;
+      left: 0;
+      min-width: 200px;
+      max-width: 320px;
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      box-shadow: 0 18px 40px rgba(15,23,42,.18);
+      padding: 6px;
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      z-index: 70;
+    }
+    .ctx-menu.open { display: flex; }
+    .ctx-section {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 4px 0;
+    }
+    .ctx-section + .ctx-section { border-top: 1px solid #e5e7eb; margin-top: 2px; padding-top: 6px; }
+    .ctx-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #6b7280;
+      padding: 4px 10px;
+    }
+    .ctx-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #111827;
+      cursor: pointer;
+      outline: none;
+    }
+    .ctx-item[aria-disabled="true"] {
+      color: #9ca3af;
+      cursor: default;
+      pointer-events: none;
+    }
+    .ctx-item:not([aria-disabled="true"]):hover,
+    .ctx-item:not([aria-disabled="true"]):focus-visible {
+      background: #e0e7ff;
+      color: #1d4ed8;
+    }
+    .ctx-item:focus-visible { box-shadow: inset 0 0 0 2px rgba(59,130,246,.35); }
+    .ctx-kbd {
+      font-size: 11px;
+      font-weight: 600;
+      color: #4b5563;
+      background: #eef2ff;
+      border-radius: 4px;
+      padding: 2px 6px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .ctx-sep {
+      height: 1px;
+      background: #e5e7eb;
+      margin: 4px 0;
+    }
+
+    :root[data-theme="dark"] .ctx-menu {
+      background: #0f172a;
+      border-color: #1f2937;
+      box-shadow: 0 18px 40px rgba(0,0,0,.55);
+    }
+    :root[data-theme="dark"] .ctx-section + .ctx-section { border-top-color: #1f2937; }
+    :root[data-theme="dark"] .ctx-label { color: #94a3b8; }
+    :root[data-theme="dark"] .ctx-item { color: #e5e7eb; }
+    :root[data-theme="dark"] .ctx-item[aria-disabled="true"] { color: #475569; }
+    :root[data-theme="dark"] .ctx-item:not([aria-disabled="true"]):hover,
+    :root[data-theme="dark"] .ctx-item:not([aria-disabled="true"]):focus-visible {
+      background: rgba(59,130,246,.16);
+      color: #bfdbfe;
+    }
+    :root[data-theme="dark"] .ctx-item:focus-visible { box-shadow: inset 0 0 0 2px rgba(59,130,246,.45); }
+    :root[data-theme="dark"] .ctx-kbd {
+      color: #cbd5f5;
+      background: rgba(148,163,184,.18);
+    }
+    :root[data-theme="dark"] .ctx-sep { background: #1f2937; }
 
     .modal { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: none; align-items:center; justify-content:center; z-index: 50; }
     .modal.open { display:flex; }
@@ -424,6 +517,7 @@
     var ignoreBasicsChk = document.getElementById('ignoreBasicsChk');
     var ignoreSnowChk = document.getElementById('ignoreSnowChk');
     var includeDFCBacksChk = document.getElementById('includeDFCBacksChk');
+    var ctxMenu = document.getElementById('ctxMenu');
 
     /* More refs */
     var themeBtn = document.getElementById('themeBtn');
@@ -459,6 +553,7 @@
       m.addEventListener('keydown', onKey);
     }
     function openModal(m){
+      ctxHide();
       lastFocus = document.activeElement;
       m.classList.add('open');
       trapFocus(m);
@@ -525,6 +620,7 @@
     /* ===== Model ===== */
     var pages = []; // {items:Array(9), pageEl, gridEl, cells[], cutOverlayEl}
     var currentPage = 0;
+    let ctxTarget = null;
 
     function createPage(){
       var p = document.createElement('div'); p.className = 'page'; p.setAttribute('role','region'); p.setAttribute('aria-label','Printable page');
@@ -578,6 +674,7 @@
       }
     }
     window.addEventListener('beforeprint', () => {
+      ctxHide();
       FORCE_PRINT_MATH = true;
       refreshCutOverlays();
       setTimeout(refreshCutOverlays, 50);
@@ -662,6 +759,7 @@
 
     function onPointerDownCell(e, model, idx){
       const cell = model.cells[idx];
+      ctxHide();
       cell.focus();
 
       if (e.button !== 0) return;
@@ -1181,6 +1279,7 @@
     clearAllBtn.addEventListener('click', function(){ clearAllPages(true); });
 
     printBtn.addEventListener('click', function(){
+      ctxHide();
       pages.forEach(p => p.pageEl.offsetHeight);
       window.print();
     });
@@ -1791,6 +1890,339 @@
       });
     });
 
+    /* ===== Context Menu ===== */
+    function ctxIsOpen(){ return !!(ctxMenu && ctxMenu.classList.contains('open')); }
+
+    function ctxEnabledItems(){
+      if (!ctxMenu) return [];
+      return Array.from(ctxMenu.querySelectorAll('.ctx-item')).filter(function(el){
+        return el.getAttribute('aria-disabled') !== 'true';
+      });
+    }
+
+    function ctxHide(){
+      if (!ctxMenu) return;
+      const wasOpen = ctxMenu.classList.contains('open');
+      const focusEl = ctxTarget && ctxTarget.focusEl && typeof ctxTarget.focusEl.focus === 'function'
+        ? ctxTarget.focusEl
+        : null;
+      ctxMenu.classList.remove('open');
+      ctxMenu.setAttribute('aria-hidden', 'true');
+      ctxMenu.innerHTML = '';
+      ctxTarget = null;
+      if (wasOpen && focusEl){
+        setTimeout(function(){
+          try{ focusEl.focus({ preventScroll: true }); }
+          catch(_){ focusEl.focus(); }
+        }, 0);
+      }
+    }
+
+    function ctxShow(x, y, builder){
+      if (!ctxMenu) return;
+      ctxMenu.innerHTML = '';
+      ctxMenu.classList.remove('open');
+      ctxMenu.setAttribute('aria-hidden', 'true');
+      if (typeof builder === 'function'){ builder(ctxMenu); }
+      if (!ctxMenu.firstElementChild){
+        ctxHide();
+        return;
+      }
+      ctxMenu.style.left = x + 'px';
+      ctxMenu.style.top = y + 'px';
+      ctxMenu.classList.add('open');
+      ctxMenu.setAttribute('aria-hidden', 'false');
+
+      requestAnimationFrame(function(){
+        if (!ctxIsOpen()) return;
+        const rect = ctxMenu.getBoundingClientRect();
+        const vw = window.innerWidth || document.documentElement.clientWidth || rect.width;
+        const vh = window.innerHeight || document.documentElement.clientHeight || rect.height;
+        let left = x;
+        let top = y;
+        if (left + rect.width > vw){ left = Math.max(8, vw - rect.width - 8); }
+        if (top + rect.height > vh){ top = Math.max(8, vh - rect.height - 8); }
+        ctxMenu.style.left = left + 'px';
+        ctxMenu.style.top = top + 'px';
+        const first = ctxMenu.querySelector('.ctx-item[aria-disabled="false"]');
+        if (first){ first.focus(); }
+      });
+    }
+
+    function ctxSection(label){
+      const sec = document.createElement('div');
+      sec.className = 'ctx-section';
+      if (label){
+        const lbl = document.createElement('div');
+        lbl.className = 'ctx-label';
+        lbl.textContent = label;
+        sec.appendChild(lbl);
+      }
+      return sec;
+    }
+
+    function ctxSeparator(){
+      const el = document.createElement('div');
+      el.className = 'ctx-sep';
+      el.setAttribute('role', 'separator');
+      return el;
+    }
+
+    function ctxItem(label, onSelect, opts){
+      opts = opts || {};
+      const el = document.createElement('div');
+      el.className = 'ctx-item';
+      el.setAttribute('role', 'menuitem');
+      const disabled = !!opts.disabled;
+      el.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+      el.tabIndex = disabled ? -1 : 0;
+
+      const text = document.createElement('span');
+      text.textContent = label;
+      el.appendChild(text);
+
+      if (opts.kbd){
+        const hint = document.createElement('span');
+        hint.className = 'ctx-kbd';
+        hint.textContent = opts.kbd;
+        el.appendChild(hint);
+      }
+
+      if (!disabled){
+        const activate = function(evt){
+          if (evt){ evt.preventDefault(); }
+          const handler = onSelect;
+          ctxHide();
+          if (typeof handler === 'function'){ handler(); }
+        };
+        el.addEventListener('click', activate);
+        el.addEventListener('keydown', function(e){
+          if (e.key === 'Enter' || e.key === ' '){ activate(e); }
+        });
+      }
+
+      return el;
+    }
+
+    function moveCell(model, index, direction){
+      if (!model || !model.items[index]) return false;
+      const offsets = { up: -cols, down: cols, left: -1, right: 1 };
+      const delta = offsets[direction];
+      if (!delta && delta !== 0) return false;
+      if (direction === 'left' && (index % cols) === 0) return false;
+      if (direction === 'right' && (index % cols) === cols - 1) return false;
+      if (direction === 'up' && index - cols < 0) return false;
+      if (direction === 'down' && index + cols >= CELLS_PER_PAGE) return false;
+      const target = index + delta;
+      handleInternalDrop(model, index, model, target);
+      if (model.cells[target] && typeof model.cells[target].focus === 'function'){
+        model.cells[target].focus();
+      }
+      return true;
+    }
+
+    function duplicateToNextEmpty(model, index){
+      if (!model || !model.items[index]) return null;
+      const src = model.items[index];
+      const pageIdx = pages.indexOf(model);
+      if (pageIdx === -1) return null;
+      let slot = nextEmptySlotFrom({ page: pageIdx, index: index + 1 });
+      if (!slot){
+        slot = ensurePageForAppend();
+      }
+      const dstModel = pages[slot.page];
+      if (!dstModel) return null;
+      dstModel.items[slot.index] = { src: src.src };
+      renderCell(dstModel, slot.index);
+      saveState();
+      return slot;
+    }
+
+    function buildCellMenu(model, index, rootEl){
+      if (!model || !rootEl) return;
+      const pageIdx = pages.indexOf(model);
+      const hasImage = !!model.items[index];
+      const cellSection = ctxSection('Cell');
+      cellSection.appendChild(ctxItem('Replace image…', function(){
+        if (pageIdx === -1) return;
+        targetIndexForFile = { page: pageIdx, index: index };
+        fileInput.click();
+      }));
+      cellSection.appendChild(ctxItem('Duplicate to next empty cell', function(){
+        duplicateToNextEmpty(model, index);
+      }, { disabled: !hasImage }));
+      cellSection.appendChild(ctxItem('Clear cell', function(){
+        model.items[index] = null;
+        renderCell(model, index);
+        saveState();
+      }, { disabled: !hasImage, kbd: 'Delete' }));
+
+      if (cellSection.querySelectorAll('.ctx-item').length){
+        rootEl.appendChild(cellSection);
+      }
+
+      const reorderSection = ctxSection('Reorder');
+      const canUp = index - cols >= 0;
+      const canDown = index + cols < CELLS_PER_PAGE;
+      const canLeft = (index % cols) > 0;
+      const canRight = (index % cols) < cols - 1;
+      reorderSection.appendChild(ctxItem('Move up', function(){ moveCell(model, index, 'up'); }, { disabled: !hasImage || !canUp, kbd: 'Alt+↑' }));
+      reorderSection.appendChild(ctxItem('Move down', function(){ moveCell(model, index, 'down'); }, { disabled: !hasImage || !canDown, kbd: 'Alt+↓' }));
+      reorderSection.appendChild(ctxItem('Move left', function(){ moveCell(model, index, 'left'); }, { disabled: !hasImage || !canLeft, kbd: 'Alt+←' }));
+      reorderSection.appendChild(ctxItem('Move right', function(){ moveCell(model, index, 'right'); }, { disabled: !hasImage || !canRight, kbd: 'Alt+→' }));
+
+      if (reorderSection.querySelectorAll('.ctx-item').length){
+        if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
+        rootEl.appendChild(reorderSection);
+      }
+    }
+
+    function buildPageMenu(rootEl){
+      if (!rootEl) return;
+      const pageIdx = (ctxTarget && typeof ctxTarget.pageIndex === 'number') ? ctxTarget.pageIndex : currentPage;
+      const model = pages[pageIdx] || null;
+      const hasContent = !!(model && model.items && model.items.some(Boolean));
+
+      const pageSection = ctxSection('Page');
+      pageSection.appendChild(ctxItem('Add page', function(){ addPage(); }, { kbd: 'N' }));
+      pageSection.appendChild(ctxItem('Remove this page', function(){
+        if (pageIdx !== currentPage) showPage(pageIdx);
+        removeCurrentPage(true);
+      }, { disabled: pages.length <= 1, kbd: 'Shift+Del' }));
+      pageSection.appendChild(ctxItem('Clear this page', function(){
+        if (pageIdx !== currentPage) showPage(pageIdx);
+        clearCurrentPage();
+      }, { disabled: !hasContent, kbd: 'Ctrl+Del' }));
+      pageSection.appendChild(ctxItem('Clear all pages', function(){ clearAllPages(true); }, { kbd: 'Ctrl+Shift+Del' }));
+
+      if (pageSection.querySelectorAll('.ctx-item').length){
+        rootEl.appendChild(pageSection);
+      }
+
+      const displaySection = ctxSection('Display');
+      displaySection.appendChild(ctxItem('Toggle guides', function(){
+        toggleGuides.checked = !toggleGuides.checked;
+        toggleGuides.dispatchEvent(new Event('change'));
+      }, { kbd: 'G' }));
+      displaySection.appendChild(ctxItem('Toggle cut marks', function(){
+        toggleCutMarks.checked = !toggleCutMarks.checked;
+        applyCutOverlay();
+      }, { kbd: 'M' }));
+
+      if (displaySection.querySelectorAll('.ctx-item').length){
+        if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
+        rootEl.appendChild(displaySection);
+      }
+
+      const appSection = ctxSection('Application');
+      appSection.appendChild(ctxItem('Print…', function(){ printBtn.click(); }, { kbd: 'P' }));
+      appSection.appendChild(ctxItem('Help & hotkeys', function(){ openModal(helpModal); }, { kbd: '?' }));
+
+      if (appSection.querySelectorAll('.ctx-item').length){
+        if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
+        rootEl.appendChild(appSection);
+      }
+    }
+
+    function ctxHandleOutsidePointer(e){
+      if (!ctxIsOpen()) return;
+      if (ctxMenu && ctxMenu.contains(e.target)) return;
+      ctxHide();
+    }
+    document.addEventListener('pointerdown', ctxHandleOutsidePointer);
+    document.addEventListener('mousedown', ctxHandleOutsidePointer);
+    window.addEventListener('wheel', function(){ ctxHide(); }, { passive: true, capture: true });
+    document.addEventListener('scroll', function(){ ctxHide(); }, true);
+    window.addEventListener('resize', ctxHide);
+    window.addEventListener('blur', ctxHide);
+
+    document.addEventListener('keydown', function(e){
+      if (!ctxIsOpen()) return;
+      const items = ctxEnabledItems();
+      if (e.key === 'Escape'){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        ctxHide();
+        return;
+      }
+      if (!items.length) return;
+      const current = items.indexOf(document.activeElement);
+      if (e.key === 'Tab'){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const next = e.shiftKey ? (current <= 0 ? items.length - 1 : current - 1) : (current === items.length - 1 ? 0 : current + 1);
+        items[next].focus();
+        return;
+      }
+      if (e.key === 'ArrowDown'){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const next = current === -1 ? 0 : (current + 1) % items.length;
+        items[next].focus();
+        return;
+      }
+      if (e.key === 'ArrowUp'){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const next = current === -1 ? items.length - 1 : (current - 1 + items.length) % items.length;
+        items[next].focus();
+        return;
+      }
+      if (e.key === 'Home'){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        items[0].focus();
+        return;
+      }
+      if (e.key === 'End'){
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        items[items.length - 1].focus();
+        return;
+      }
+      if (!e.altKey && !e.ctrlKey && !e.metaKey){
+        e.stopImmediatePropagation();
+      }
+    }, true);
+
+    if (ctxMenu){
+      ctxMenu.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+    }
+
+    document.addEventListener('contextmenu', function(e){
+      if (!ctxMenu) return;
+      const target = e.target;
+      if (!target) { ctxHide(); return; }
+      if (ctxMenu.contains(target)){ return; }
+
+      const native = target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]');
+      if (native){ ctxHide(); return; }
+
+      const cell = target.closest && target.closest('.cell');
+      if (cell){
+        const resolved = resolveModelFromCellEl(cell);
+        if (resolved){
+          e.preventDefault();
+          ctxTarget = { type: 'cell', model: resolved.model, index: resolved.index, pageIndex: pages.indexOf(resolved.model), focusEl: cell };
+          ctxShow(e.clientX, e.clientY, function(root){ buildCellMenu(resolved.model, resolved.index, root); });
+          return;
+        }
+      }
+
+      const page = target.closest && target.closest('.page');
+      if (page){
+        const pageIndex = pages.findIndex(function(p){ return p.pageEl === page; });
+        if (pageIndex !== -1){
+          e.preventDefault();
+          ctxTarget = { type: 'page', pageIndex: pageIndex, model: pages[pageIndex], focusEl: null };
+          ctxShow(e.clientX, e.clientY, function(root){ buildPageMenu(root); });
+          return;
+        }
+      }
+
+      ctxHide();
+    });
+
     /* ===== Init ===== */
     pages.push(createPage());
     renderGrid(pages[0]);
@@ -1802,5 +2234,6 @@
     // Expose for debugging
     window.__mtgDebug = { pages };
   </script>
+  <div id="ctxMenu" class="ctx-menu" role="menu" aria-hidden="true"></div>
 </body>
 </html>
