@@ -1738,82 +1738,26 @@
       return files;
     }
 
+    const CLIPBOARD_UNAVAILABLE_MSG = 'Clipboard features require the desktop app';
+
     function clipboardCanWriteImage(){
-      return !!(navigator.clipboard && typeof navigator.clipboard.write === 'function' && typeof ClipboardItem !== 'undefined');
+      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      return false;
     }
 
     function clipboardCanReadImage(){
-      return !!(navigator.clipboard && typeof navigator.clipboard.read === 'function');
+      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      return false;
     }
 
     async function copyCellImage(model, index){
-      if(!clipboardCanWriteImage()){
-        setStatus('Clipboard copy not supported');
-        return false;
-      }
-      if(!model || !model.items || !model.items[index]){
-        setStatus('No image to copy');
-        return false;
-      }
-      const itemData = model.items[index];
-      let blob = null;
-      try{
-        if(itemData.type === 'stored' && itemData.key){
-          blob = await imageStore.getBlob(itemData.key, itemData.mime || null);
-        } else if (itemData.type === 'url' && itemData.url){
-          const resp = await fetch(itemData.url, { mode: 'cors' });
-          if(!resp.ok) throw new Error('Image fetch failed');
-          blob = await resp.blob();
-        } else if (itemData.url){
-          const resp = await fetch(itemData.url, { mode: 'cors' });
-          if(!resp.ok) throw new Error('Image fetch failed');
-          blob = await resp.blob();
-        } else if (itemData.resolvedSrc && isDataUrl(itemData.resolvedSrc)){
-          blob = dataUrlToBlob(itemData.resolvedSrc);
-        }
-      }catch(err){
-        console.error('Copy failed', err);
-        setStatus('Copy failed (clipboard permissions?)');
-        return false;
-      }
-
-      if(!blob){
-        setStatus('No image to copy');
-        return false;
-      }
-
-      try{
-        const type = blob.type || 'image/png';
-        const clipItem = new ClipboardItem({ [type]: blob });
-        await navigator.clipboard.write([clipItem]);
-        setStatus('Copied image to clipboard');
-        return true;
-      }catch(err){
-        console.error('Copy failed', err);
-        setStatus('Copy failed (clipboard permissions?)');
-        return false;
-      }
+      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      return false;
     }
 
     async function readClipboardImageFiles(){
-      if(!clipboardCanReadImage()) throw new Error('Clipboard read not supported');
-      const result = [];
-      const items = await navigator.clipboard.read();
-      for(const item of items){
-        for(const type of item.types || []){
-          if(type && type.indexOf('image/') === 0){
-            try{
-              const blob = await item.getType(type);
-              const name = 'clipboard.' + (type.split('/')[1] || 'png');
-              const file = (typeof File === 'function') ? new File([blob], name, { type: blob.type || type }) : blob;
-              result.push(file);
-            }catch(err){
-              console.error('Failed to read clipboard item', err);
-            }
-          }
-        }
-      }
-      return result;
+      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      return [];
     }
 
     function preferredSlotForPage(pageIdx){
@@ -1825,60 +1769,15 @@
     }
 
     async function pasteImageFromClipboard(target){
-      try{
-        const files = await readClipboardImageFiles();
-        if(!files.length){ setStatus('Clipboard has no image'); return false; }
-        const opts = {};
-        if(target && target.type === 'cell' && typeof target.pageIndex === 'number'){
-          opts.preferredSlot = { page: target.pageIndex, index: target.index };
-          opts.allowOverwrite = true;
-        } else if(target && target.type === 'page' && typeof target.pageIndex === 'number'){
-          const slot = preferredSlotForPage(target.pageIndex);
-          if(slot){ opts.preferredSlot = slot; }
-          opts.startPage = target.pageIndex;
-        } else if(target && target.type === 'app' && typeof target.pageIndex === 'number'){
-          const slot = preferredSlotForPage(target.pageIndex);
-          if(slot){ opts.preferredSlot = slot; }
-          opts.startPage = target.pageIndex;
-        }
-        handleFiles(files, opts);
-        setStatus('Pasted image from clipboard');
-        return true;
-      }catch(err){
-        console.error('Paste failed', err);
-        setStatus('Paste failed (clipboard permissions?)');
-        return false;
-      }
+      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      return false;
     }
 
     document.addEventListener('paste', function(e){
       const active = document.activeElement;
       if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
-      const cd = e.clipboardData;
-      if(!cd) return;
-
-      const files = collectImageFilesFromClipboardData(cd);
-
-      if(!files.length) return;
-
-      let preferredSlot = null;
-      if(active && active.classList && active.classList.contains('cell')){
-        const resolved = resolveModelFromCellEl(active);
-        if(resolved){
-          const pageIdx = pages.indexOf(resolved.model);
-          if(pageIdx !== -1 && !resolved.model.items[resolved.index]){
-            preferredSlot = { page: pageIdx, index: resolved.index };
-          }
-        }
-      }
-
-      e.preventDefault();
-      if(preferredSlot){
-        handleFiles(files, { preferredSlot: preferredSlot });
-      } else {
-        handleFiles(files);
-      }
+      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
     });
 
     const IMAGE_FILE_BATCH_SIZE = 16;
@@ -2167,7 +2066,7 @@
           const resolved = resolveModelFromCellEl(cell);
           if(resolved && resolved.model && resolved.model.items && resolved.model.items[resolved.index]){
             e.preventDefault();
-            copyCellImage(resolved.model, resolved.index);
+            setStatus(CLIPBOARD_UNAVAILABLE_MSG);
             return;
           }
         }
@@ -2955,10 +2854,10 @@
       const clipboardSection = ctxSection('Clipboard');
       clipboardSection.appendChild(ctxItem('Copy image', function(){
         copyCellImage(model, index);
-      }, { disabled: !hasImage || !clipboardCanWriteImage(), kbd: 'Ctrl+C' }));
+      }, { disabled: !hasImage, kbd: 'Ctrl+C' }));
       clipboardSection.appendChild(ctxItem('Paste image', function(){
         pasteImageFromClipboard({ type: 'cell', model: model, index: index, pageIndex: pageIdx });
-      }, { disabled: !clipboardCanReadImage(), kbd: 'Ctrl+V' }));
+      }, { kbd: 'Ctrl+V' }));
 
       if (clipboardSection.querySelectorAll('.ctx-item').length){
         if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
@@ -2991,7 +2890,7 @@
       const clipboardSection = ctxSection('Clipboard');
       clipboardSection.appendChild(ctxItem('Paste image', function(){
         pasteImageFromClipboard({ type: clipTarget.type === 'page' ? 'page' : 'app', pageIndex: pageIdx });
-      }, { disabled: !clipboardCanReadImage(), kbd: 'Ctrl+V' }));
+      }, { kbd: 'Ctrl+V' }));
 
       if (clipboardSection.querySelectorAll('.ctx-item').length){
         rootEl.appendChild(clipboardSection);
