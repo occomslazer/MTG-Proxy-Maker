@@ -387,6 +387,7 @@
             <li><b>Alt+Arrows</b> – Reorder focused cell</li>
             <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
             <li><b>Delete/Backspace</b> – Clear focused cell</li>
+            <li><b>Ctrl/⌘+C</b> – Copy focused cell image</li>
             <li><b>Ctrl/⌘+V</b> – Paste images from your clipboard</li>
             <li><b>1–9</b> – Focus a cell</li>
             <li><b>Enter</b> in card field – Add card</li>
@@ -1089,15 +1090,9 @@
       });
     });
 
-    document.addEventListener('paste', function(e){
-      const active = document.activeElement;
-      if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
-
-      const cd = e.clipboardData;
-      if(!cd) return;
-
+    function collectImageFilesFromClipboardData(cd){
       const files = [];
-
+      if(!cd) return files;
       if(cd.files && cd.files.length){
         Array.from(cd.files).forEach(function(file){
           if(file && file.type && file.type.indexOf('image/') === 0){ files.push(file); }
@@ -1109,6 +1104,125 @@
           if(file && file.type && file.type.indexOf('image/') === 0){ files.push(file); }
         });
       }
+      return files;
+    }
+
+    function clipboardCanWriteImage(){
+      return !!(navigator.clipboard && typeof navigator.clipboard.write === 'function' && typeof ClipboardItem !== 'undefined');
+    }
+
+    function clipboardCanReadImage(){
+      return !!(navigator.clipboard && typeof navigator.clipboard.read === 'function');
+    }
+
+    function dataUrlToBlob(dataUrl){
+      const parts = dataUrl.split(',');
+      if(parts.length < 2) return null;
+      const match = /^data:([^;]+);base64$/i.exec(parts[0]);
+      const mime = match ? match[1] : 'image/png';
+      const binary = atob(parts[1]);
+      const len = binary.length;
+      const buffer = new Uint8Array(len);
+      for(let i=0;i<len;i++) buffer[i] = binary.charCodeAt(i);
+      return new Blob([buffer], { type: mime });
+    }
+
+    async function copyCellImage(model, index){
+      if(!clipboardCanWriteImage()){
+        setStatus('Clipboard copy not supported');
+        return false;
+      }
+      if(!model || !model.items || !model.items[index] || !model.items[index].src){
+        setStatus('No image to copy');
+        return false;
+      }
+      const src = model.items[index].src;
+      try{
+        let blob = null;
+        if(src.startsWith('data:')){
+          blob = dataUrlToBlob(src);
+        } else {
+          const resp = await fetch(src, { mode: 'cors' });
+          if(!resp.ok) throw new Error('Image fetch failed');
+          blob = await resp.blob();
+        }
+        if(!blob) throw new Error('No image data');
+        const type = blob.type || 'image/png';
+        const item = new ClipboardItem({ [type]: blob });
+        await navigator.clipboard.write([item]);
+        setStatus('Copied image to clipboard');
+        return true;
+      }catch(err){
+        console.error('Copy failed', err);
+        setStatus('Copy failed (clipboard permissions?)');
+        return false;
+      }
+    }
+
+    async function readClipboardImageFiles(){
+      if(!clipboardCanReadImage()) throw new Error('Clipboard read not supported');
+      const result = [];
+      const items = await navigator.clipboard.read();
+      for(const item of items){
+        for(const type of item.types || []){
+          if(type && type.indexOf('image/') === 0){
+            try{
+              const blob = await item.getType(type);
+              const name = 'clipboard.' + (type.split('/')[1] || 'png');
+              const file = (typeof File === 'function') ? new File([blob], name, { type: blob.type || type }) : blob;
+              result.push(file);
+            }catch(err){
+              console.error('Failed to read clipboard item', err);
+            }
+          }
+        }
+      }
+      return result;
+    }
+
+    function preferredSlotForPage(pageIdx){
+      if(typeof pageIdx !== 'number' || pageIdx < 0 || pageIdx >= pages.length) return null;
+      const model = pages[pageIdx];
+      if(!model || !model.items) return null;
+      const empty = model.items.findIndex(function(item){ return !item; });
+      return empty !== -1 ? { page: pageIdx, index: empty } : null;
+    }
+
+    async function pasteImageFromClipboard(target){
+      try{
+        const files = await readClipboardImageFiles();
+        if(!files.length){ setStatus('Clipboard has no image'); return false; }
+        const opts = {};
+        if(target && target.type === 'cell' && typeof target.pageIndex === 'number'){
+          opts.preferredSlot = { page: target.pageIndex, index: target.index };
+          opts.allowOverwrite = true;
+        } else if(target && target.type === 'page' && typeof target.pageIndex === 'number'){
+          const slot = preferredSlotForPage(target.pageIndex);
+          if(slot){ opts.preferredSlot = slot; }
+          opts.startPage = target.pageIndex;
+        } else if(target && target.type === 'app' && typeof target.pageIndex === 'number'){
+          const slot = preferredSlotForPage(target.pageIndex);
+          if(slot){ opts.preferredSlot = slot; }
+          opts.startPage = target.pageIndex;
+        }
+        handleFiles(files, opts);
+        setStatus('Pasted image from clipboard');
+        return true;
+      }catch(err){
+        console.error('Paste failed', err);
+        setStatus('Paste failed (clipboard permissions?)');
+        return false;
+      }
+    }
+
+    document.addEventListener('paste', function(e){
+      const active = document.activeElement;
+      if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
+
+      const cd = e.clipboardData;
+      if(!cd) return;
+
+      const files = collectImageFilesFromClipboardData(cd);
 
       if(!files.length) return;
 
@@ -1192,14 +1306,24 @@
       if(files.length===0) return;
 
       var preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
+      const allowOverwrite = !!(opts && opts.allowOverwrite);
+      var startPage = (opts && typeof opts.startPage === 'number') ? opts.startPage : currentPage;
+      if(!pages.length){
+        startPage = 0;
+      } else {
+        if(startPage < 0) startPage = 0;
+        if(startPage >= pages.length) startPage = pages.length - 1;
+      }
+
       if(preferred){
-        var isValid = pages[preferred.page] && pages[preferred.page].items && pages[preferred.page].items[preferred.index] == null;
+        var hasModel = pages[preferred.page] && pages[preferred.page].items;
+        var isValid = hasModel && (pages[preferred.page].items[preferred.index] == null || allowOverwrite);
         if(!isValid){ preferred = null; }
       }
 
       var queue = files.slice();
       var usingPreferredFirst = !!preferred;
-      var pos = preferred || nextEmptySlot(currentPage) || ensurePageForAppend();
+      var pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
 
       var loop = function(){
         if(queue.length===0) return;
@@ -1208,7 +1332,7 @@
         reader.onload = function(){
           var img = new Image();
           img.onload = function(){
-            var target = pos || nextEmptySlot(currentPage) || ensurePageForAppend();
+            var target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
             var m = pages[target.page];
             placeImage(m, target.index, img.src);
 
@@ -1363,6 +1487,18 @@
       }
 
       if(e.key==='n' || e.key==='N'){ e.preventDefault(); addPage(); return; }
+
+      if((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key==='c' || e.key==='C')){
+        const cell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
+        if(cell){
+          const resolved = resolveModelFromCellEl(cell);
+          if(resolved && resolved.model && resolved.model.items && resolved.model.items[resolved.index]){
+            e.preventDefault();
+            copyCellImage(resolved.model, resolved.index);
+            return;
+          }
+        }
+      }
 
       const isDel = (e.key==='Delete' || e.key==='Backspace');
 
@@ -2063,6 +2199,19 @@
         rootEl.appendChild(cellSection);
       }
 
+      const clipboardSection = ctxSection('Clipboard');
+      clipboardSection.appendChild(ctxItem('Copy image', function(){
+        copyCellImage(model, index);
+      }, { disabled: !hasImage || !clipboardCanWriteImage(), kbd: 'Ctrl+C' }));
+      clipboardSection.appendChild(ctxItem('Paste image', function(){
+        pasteImageFromClipboard({ type: 'cell', model: model, index: index, pageIndex: pageIdx });
+      }, { disabled: !clipboardCanReadImage(), kbd: 'Ctrl+V' }));
+
+      if (clipboardSection.querySelectorAll('.ctx-item').length){
+        if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
+        rootEl.appendChild(clipboardSection);
+      }
+
       const reorderSection = ctxSection('Reorder');
       const canUp = index - cols >= 0;
       const canDown = index + cols < CELLS_PER_PAGE;
@@ -2085,6 +2234,16 @@
       const model = pages[pageIdx] || null;
       const hasContent = !!(model && model.items && model.items.some(Boolean));
 
+      const clipTarget = (ctxTarget && ctxTarget.type) ? ctxTarget : { type: 'page', pageIndex: pageIdx };
+      const clipboardSection = ctxSection('Clipboard');
+      clipboardSection.appendChild(ctxItem('Paste image', function(){
+        pasteImageFromClipboard({ type: clipTarget.type === 'page' ? 'page' : 'app', pageIndex: pageIdx });
+      }, { disabled: !clipboardCanReadImage(), kbd: 'Ctrl+V' }));
+
+      if (clipboardSection.querySelectorAll('.ctx-item').length){
+        rootEl.appendChild(clipboardSection);
+      }
+
       const pageSection = ctxSection('Page');
       pageSection.appendChild(ctxItem('Add page', function(){ addPage(); }, { kbd: 'N' }));
       pageSection.appendChild(ctxItem('Remove this page', function(){
@@ -2098,6 +2257,7 @@
       pageSection.appendChild(ctxItem('Clear all pages', function(){ clearAllPages(true); }, { kbd: 'Ctrl+Shift+Del' }));
 
       if (pageSection.querySelectorAll('.ctx-item').length){
+        if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
         rootEl.appendChild(pageSection);
       }
 
@@ -2197,6 +2357,8 @@
       if (!target) { ctxHide(); return; }
       if (ctxMenu.contains(target)){ return; }
 
+      const activeCell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
+
       const native = target.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]');
       if (native){ ctxHide(); return; }
 
@@ -2216,13 +2378,16 @@
         const pageIndex = pages.findIndex(function(p){ return p.pageEl === page; });
         if (pageIndex !== -1){
           e.preventDefault();
-          ctxTarget = { type: 'page', pageIndex: pageIndex, model: pages[pageIndex], focusEl: null };
+          ctxTarget = { type: 'page', pageIndex: pageIndex, model: pages[pageIndex], focusEl: activeCell };
           ctxShow(e.clientX, e.clientY, function(root){ buildPageMenu(root); });
           return;
         }
       }
 
-      ctxHide();
+      e.preventDefault();
+      const pageIndex = Math.max(0, Math.min(currentPage, pages.length ? pages.length - 1 : 0));
+      ctxTarget = { type: 'app', pageIndex: pageIndex, model: pages[pageIndex] || null, focusEl: activeCell };
+      ctxShow(e.clientX, e.clientY, function(root){ buildPageMenu(root); });
     });
 
     /* ===== Init ===== */
