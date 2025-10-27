@@ -1010,8 +1010,23 @@
 
       if(!files.length) return;
 
+      let preferredSlot = null;
+      if(active && active.classList && active.classList.contains('cell')){
+        const resolved = resolveModelFromCellEl(active);
+        if(resolved){
+          const pageIdx = pages.indexOf(resolved.model);
+          if(pageIdx !== -1 && !resolved.model.items[resolved.index]){
+            preferredSlot = { page: pageIdx, index: resolved.index };
+          }
+        }
+      }
+
       e.preventDefault();
-      handleFiles(files);
+      if(preferredSlot){
+        handleFiles(files, { preferredSlot: preferredSlot });
+      } else {
+        handleFiles(files);
+      }
     });
 
     function assignFileToIndex(file, pageIdx, cellIdx){
@@ -1070,24 +1085,41 @@
       loop();
     }
 
-    function handleFiles(fileList){
-      var files = Array.from(fileList).filter(f=>f.type.indexOf('image/')===0);
+    function handleFiles(fileList, opts){
+      var files = Array.from(fileList||[]).filter(f=>f.type && f.type.indexOf('image/')===0);
       if(files.length===0) return;
-      var pos = nextEmptySlot(currentPage) || ensurePageForAppend();
+
+      var preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
+      if(preferred){
+        var isValid = pages[preferred.page] && pages[preferred.page].items && pages[preferred.page].items[preferred.index] == null;
+        if(!isValid){ preferred = null; }
+      }
+
+      var queue = files.slice();
+      var usingPreferredFirst = !!preferred;
+      var pos = preferred || nextEmptySlot(currentPage) || ensurePageForAppend();
+
       var loop = function(){
-        if(files.length===0) return;
-        var f=files.shift();
-        var reader=new FileReader();
-        reader.onload=function(){
-          var img=new Image();
-          img.onload=function(){
-            var m=pages[pos.page];
-            placeImage(m, pos.index, img.src);
-            var startFrom = (pos.index+1>=CELLS_PER_PAGE)? pos.page+1 : pos.page;
-            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+        if(queue.length===0) return;
+        var f = queue.shift();
+        var reader = new FileReader();
+        reader.onload = function(){
+          var img = new Image();
+          img.onload = function(){
+            var target = pos || nextEmptySlot(currentPage) || ensurePageForAppend();
+            var m = pages[target.page];
+            placeImage(m, target.index, img.src);
+
+            if(usingPreferredFirst){
+              usingPreferredFirst = false;
+              pos = nextEmptySlot(target.page) || ensurePageForAppend();
+            } else {
+              var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
+              pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+            }
             loop();
           };
-          img.src=reader.result;
+          img.src = reader.result;
         };
         reader.readAsDataURL(f);
       };
