@@ -977,8 +977,7 @@
                   <li><b>Alt+Arrows</b> – Reorder focused cell</li>
                   <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
                   <li><b>Delete/Backspace</b> – Clear focused cell</li>
-                  <li><b>Ctrl/⌘+C</b> – Copy focused cell image</li>
-                  <li><b>Ctrl/⌘+V</b> – Paste images from your clipboard</li>
+                  <li><b>Clipboard actions</b> – Copy/paste isn’t available in the browser. <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">Download the desktop app</a> for full support.</li>
                   <li><b>1–9</b> – Focus a cell</li>
                   <li><b>Enter</b> in card field – Add card</li>
                   <li><b>P</b> – Print all pages</li>
@@ -995,7 +994,7 @@
                   <li>Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.</li>
                   <li>To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.</li>
                   <li>Double-click a cell to replace its image.</li>
-                  <li>Paste screenshots or copied images (Ctrl/⌘+V) to auto-fill empty cells, or focus a cell first to target it.</li>
+                  <li>Clipboard paste is a desktop-only feature—grab the <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> to auto-fill cells from screenshots or copied images.</li>
                   <li>New pages are created automatically when needed.</li>
                   <li><b>Print</b> prints all pages exact size.</li>
                 </ul>
@@ -1017,7 +1016,7 @@
             </div>
 
             <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
-            <p class="footnote">⚠️ Right-click copy/paste is limited in the browser version. Use the desktop app for full clipboard support.</p>
+            <p class="footnote">⚠️ Clipboard features (copy/paste, right-click actions) require the desktop release. <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">Download the desktop app</a> for full support.</p>
 
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
@@ -2852,12 +2851,7 @@
       }
 
       const clipboardSection = ctxSection('Clipboard');
-      clipboardSection.appendChild(ctxItem('Copy image', function(){
-        copyCellImage(model, index);
-      }, { disabled: !hasImage, kbd: 'Ctrl+C' }));
-      clipboardSection.appendChild(ctxItem('Paste image', function(){
-        pasteImageFromClipboard({ type: 'cell', model: model, index: index, pageIndex: pageIdx });
-      }, { kbd: 'Ctrl+V' }));
+      clipboardSection.appendChild(ctxItem('Clipboard actions are disabled in the browser—use the desktop app for copy/paste support.', null, { disabled: true }));
 
       if (clipboardSection.querySelectorAll('.ctx-item').length){
         if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
@@ -2886,11 +2880,8 @@
       const model = pages[pageIdx] || null;
       const hasContent = !!(model && model.items && model.items.some(Boolean));
 
-      const clipTarget = (ctxTarget && ctxTarget.type) ? ctxTarget : { type: 'page', pageIndex: pageIdx };
       const clipboardSection = ctxSection('Clipboard');
-      clipboardSection.appendChild(ctxItem('Paste image', function(){
-        pasteImageFromClipboard({ type: clipTarget.type === 'page' ? 'page' : 'app', pageIndex: pageIdx });
-      }, { kbd: 'Ctrl+V' }));
+      clipboardSection.appendChild(ctxItem('Clipboard actions are disabled in the browser—use the desktop app for copy/paste support.', null, { disabled: true }));
 
       if (clipboardSection.querySelectorAll('.ctx-item').length){
         rootEl.appendChild(clipboardSection);
