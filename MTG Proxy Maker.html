@@ -1246,14 +1246,67 @@
       }
     });
 
-    function assignFileToIndex(file, pageIdx, cellIdx){
-      var reader = new FileReader();
-      reader.onload = function(){
-        var img=new Image();
-        img.onload=function(){ var model=pages[pageIdx]; placeImage(model, cellIdx, img.src); };
-        img.src=reader.result;
-      };
-      reader.readAsDataURL(file);
+    const IMAGE_FILE_BATCH_SIZE = 16;
+
+    function readFileAsDataURL(file){
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function ensureImageLoaded(src){
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error('Image failed to load.'));
+        img.src = src;
+      });
+    }
+
+    async function processImageFilesInBatches(files, handler){
+      if(!files.length) return;
+      const idleFallback = (typeof requestIdleCallback === 'function') ? requestIdleCallback : null;
+      for(let start = 0; start < files.length; start += IMAGE_FILE_BATCH_SIZE){
+        const batch = files.slice(start, start + IMAGE_FILE_BATCH_SIZE);
+        for(const file of batch){
+          try{
+            const dataPromise = readFileAsDataURL(file);
+            let decodedWithBitmap = false;
+            if(typeof createImageBitmap === 'function'){
+              try{
+                const bitmap = await createImageBitmap(file);
+                decodedWithBitmap = true;
+                if(bitmap && typeof bitmap.close === 'function'){
+                  bitmap.close();
+                }
+              }catch(err){
+                console.warn('createImageBitmap failed; falling back to Image()', err);
+              }
+            }
+            const dataUrl = await dataPromise;
+            if(!decodedWithBitmap){
+              await ensureImageLoaded(dataUrl);
+            }
+            await handler(file, dataUrl);
+          }catch(err){
+            console.error('Failed to process image file', err);
+          }
+        }
+        await new Promise(r => ((idleFallback || setTimeout))(r, 0));
+      }
+    }
+
+    async function assignFileToIndex(file, pageIdx, cellIdx){
+      if(!file || !file.type || file.type.indexOf('image/') !== 0) return;
+      await processImageFilesInBatches([file], async (_, dataUrl) => {
+        const model = pages[pageIdx];
+        if(model){
+          placeImage(model, cellIdx, dataUrl);
+        }
+      });
     }
 
     function nextEmptySlot(startPage){ if(startPage==null) startPage=0; for(var p=startPage;p<pages.length;p++){ var model=pages[p]; var idx=model.items.findIndex(x=>x==null); if(idx!==-1) return {page:p, index: idx}; } return null; }
@@ -1277,32 +1330,22 @@
       return {page: pages.length-1, index: 0};
     }
 
-    function handleFilesIntoCell(model, targetIdx, fileList){
+    async function handleFilesIntoCell(model, targetIdx, fileList){
       var files = Array.from(fileList||[]).filter(f=>f.type && f.type.indexOf('image/')===0);
       if(files.length===0) return;
       var pageIdx = pages.indexOf(model);
+      if(pageIdx === -1) return;
       var pos = {page: pageIdx, index: targetIdx};
-      var q = files.slice();
-      var loop = function(){
-        if(q.length===0) return;
-        var f = q.shift();
-        var reader = new FileReader();
-        reader.onload = function(){
-          var img = new Image();
-          img.onload = function(){
-            var m = pages[pos.page];
-            placeImage(m, pos.index, img.src);
-            var next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
-            pos = next; loop();
-          };
-          img.src = reader.result;
-        };
-        reader.readAsDataURL(f);
-      };
-      loop();
+      await processImageFilesInBatches(files, async (_, dataUrl) => {
+        var m = pages[pos.page];
+        if(!m) return;
+        placeImage(m, pos.index, dataUrl);
+        var next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
+        pos = next;
+      });
     }
 
-    function handleFiles(fileList, opts){
+    async function handleFiles(fileList, opts){
       var files = Array.from(fileList||[]).filter(f=>f.type && f.type.indexOf('image/')===0);
       if(files.length===0) return;
 
@@ -1322,35 +1365,22 @@
         if(!isValid){ preferred = null; }
       }
 
-      var queue = files.slice();
       var usingPreferredFirst = !!preferred;
       var pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
 
-      var loop = function(){
-        if(queue.length===0) return;
-        var f = queue.shift();
-        var reader = new FileReader();
-        reader.onload = function(){
-          var img = new Image();
-          img.onload = function(){
-            var target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
-            var m = pages[target.page];
-            placeImage(m, target.index, img.src);
+      await processImageFilesInBatches(files, async (_, dataUrl) => {
+        var target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+        var m = pages[target.page];
+        placeImage(m, target.index, dataUrl);
 
-            if(usingPreferredFirst){
-              usingPreferredFirst = false;
-              pos = nextEmptySlot(target.page) || ensurePageForAppend();
-            } else {
-              var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-              pos = nextEmptySlot(startFrom) || ensurePageForAppend();
-            }
-            loop();
-          };
-          img.src = reader.result;
-        };
-        reader.readAsDataURL(f);
-      };
-      loop();
+        if(usingPreferredFirst){
+          usingPreferredFirst = false;
+          pos = nextEmptySlot(target.page) || ensurePageForAppend();
+        } else {
+          var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
+          pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+        }
+      });
     }
 
     /* ===== Pager & Clear helpers ===== */
