@@ -1470,11 +1470,15 @@
         if(images){
           images = normalizeCardImages(images);
         }else{
-          images = await fetchCardByName(name);
+          images = normalizeCardImages(await fetchCardByName(name));
         }
         if(!images || !images.front) throw new Error('No image for: '+name);
+        const includeBacks = !!(includeDFCBacksChk && includeDFCBacksChk.checked);
         scryCache.set(key, images);
         await addImageSrcToNextCell(images.front);
+        if(includeBacks && images.back){
+          await addImageSrcToNextCell(images.back);
+        }
         setStatus('Added');
       } catch(err){ console.error(err); setStatus('Error: '+err.message); }
     }
