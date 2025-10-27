@@ -260,7 +260,7 @@
   <div id="deckModal" class="modal">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="deckTitle">
       <h2 id="deckTitle">Import decklist (Scryfall)</h2>
-      <p style="margin:0;color:#6b7280;font-size:13px">Format: <code>4 Lightning Bolt</code>, one per line. Optional set code with <code>[M11]</code> or <code>(M11)</code>. DFCs use the front face.</p>
+      <p style="margin:0;color:#6b7280;font-size:13px">Format: <code>4 Lightning Bolt</code>, one per line. Optional set code with <code>[M11]</code> or <code>(M11)</code>. DFCs use the front face unless you include backs.</p>
       <textarea id="deckText" placeholder="4 Lightning Bolt&#10;2 Snapcaster Mage&#10;1 Sol Ring"></textarea>
       <div style="display:flex; gap:8px; align-items:center;">
         <label class="field" title="Skip Plains/Island/Swamp/Mountain/Forest/Wastes">
@@ -268,6 +268,9 @@
         </label>
         <label class="field" title="Also skip Snow-Covered basics">
           <input id="ignoreSnowChk" type="checkbox" checked /> Ignore snow-covered basics
+        </label>
+        <label class="field" title="Add the reverse face of double-faced cards after the front image">
+          <input id="includeDFCBacksChk" type="checkbox" /> Include DFC back faces
         </label>
         <button id="importDeckBtn">Import</button>
         <div class="right"></div>
@@ -325,7 +328,7 @@
           <h3 style="margin:12px 0 4px;">Decklist importer</h3>
           <ul class="help-list">
             <li>Paste one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>.</li>
-            <li>Double-faced cards use the front face.</li>
+            <li>Double-faced cards use the front face (enable “Include DFC back faces” to add the reverse).</li>
             <li>Use the checkboxes to skip basics and Snow-Covered basics.</li>
             <li>Images are fetched via Scryfall and placed across pages automatically; unknown cards are skipped.</li>
           </ul>
@@ -415,6 +418,7 @@
     var closeDeckBtn = document.getElementById('closeDeckBtn');
     var ignoreBasicsChk = document.getElementById('ignoreBasicsChk');
     var ignoreSnowChk = document.getElementById('ignoreSnowChk');
+    var includeDFCBacksChk = document.getElementById('includeDFCBacksChk');
 
     /* More refs */
     var themeBtn = document.getElementById('themeBtn');
@@ -1352,6 +1356,27 @@
     /* ===== Scryfall (search & decklist) ===== */
     const scryCache = new Map();
 
+    function pickImageFromUris(obj){
+      if(!obj || !obj.image_uris) return null;
+      return obj.image_uris.png || obj.image_uris.large || obj.image_uris.normal || null;
+    }
+
+    function makeCardImages(card){
+      if(!card) return { front: null, back: null };
+      const faces = Array.isArray(card.card_faces) ? card.card_faces : [];
+      const front = pickImageFromUris(card) || pickImageFromUris(faces[0]) || null;
+      const back = faces.length > 1 ? (pickImageFromUris(faces[1]) || null) : null;
+      return { front, back };
+    }
+
+    function normalizeCardImages(value){
+      if(!value) return null;
+      if(typeof value === 'string') return { front: value, back: null };
+      const front = value.front || null;
+      const back = value.back || null;
+      return { front, back };
+    }
+
     function splitNameAndSet(raw){
       let s = String(raw).trim();
       const qm = s.match(/^(\d+)\s*x?\s+(.+)$/i);
@@ -1370,22 +1395,24 @@
         ? 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base)+'&set='+encodeURIComponent(set)
         : 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base);
       var r = await fetch(url); if(!r.ok) throw new Error('Not found: '+name); var data = await r.json();
-      var src = (data.image_uris && (data.image_uris.png || data.image_uris.large || data.image_uris.normal)) || null;
-      if(!src && data.card_faces && data.card_faces.length){
-        var cf=data.card_faces[0];
-        src = (cf.image_uris && (cf.image_uris.png || cf.image_uris.large || cf.image_uris.normal)) || src;
-      }
-      if(!src) throw new Error('No image for: '+name);
-      return src;
+      const images = makeCardImages(data);
+      if(!images.front) throw new Error('No image for: '+name);
+      return images;
     }
 
     async function addCardByName(name){
       try{
         setStatus('Fetching: '+name);
         const key = name.toLowerCase();
-        const src = scryCache.get(key) || await fetchCardByName(name);
-        scryCache.set(key, src);
-        await addImageSrcToNextCell(src);
+        let images = scryCache.get(key);
+        if(images){
+          images = normalizeCardImages(images);
+        }else{
+          images = await fetchCardByName(name);
+        }
+        if(!images || !images.front) throw new Error('No image for: '+name);
+        scryCache.set(key, images);
+        await addImageSrcToNextCell(images.front);
         setStatus('Added');
       } catch(err){ console.error(err); setStatus('Error: '+err.message); }
     }
@@ -1419,8 +1446,12 @@
       for (const original of names){
         const key = original.toLowerCase();
         if (scryCache.has(key)) {
-          results.set(original, scryCache.get(key));
-          continue;
+          const cached = normalizeCardImages(scryCache.get(key));
+          if (cached && cached.front){
+            scryCache.set(key, cached);
+            results.set(original, cached);
+            continue;
+          }
         }
         const { name, set } = splitNameAndSet(original);
         toFetch.push({ original, identifier: set ? { name, set: set.toLowerCase() } : { name } });
@@ -1439,8 +1470,11 @@
         if (!data || !Array.isArray(data.data)) {
           for (const item of chunk){
             try{
-              const src = await fetchCardByName(item.original);
-              results.set(item.original, src);
+              const images = await fetchCardByName(item.original);
+              if(images && images.front){
+                results.set(item.original, images);
+                scryCache.set(item.original.toLowerCase(), images);
+              }
             }catch(_){}
           }
           continue;
@@ -1456,23 +1490,22 @@
             const gotName = (card.name || card.printed_name || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
             const gotSet  = (card.set || '').toLowerCase();
             if (gotName === wantName && (!wantSet || gotSet === wantSet)) {
-              let src =
-                (card.image_uris && (card.image_uris.png || card.image_uris.large || card.image_uris.normal)) ||
-                (card.card_faces && card.card_faces[0] && (card.card_faces[0].image_uris?.png || card.card_faces[0].image_uris?.large || card.card_faces[0].image_uris?.normal)) ||
-                null;
-              if (src){
-                results.set(req.original, src);
-                scryCache.set(req.original.toLowerCase(), src);
+              const images = makeCardImages(card);
+              if (images.front){
+                results.set(req.original, images);
+                scryCache.set(req.original.toLowerCase(), images);
+                matched = true;
+                di++;
               }
-              matched = true;
-              di++;
             }
           }
           if (!matched){
             try{
-              const src = await fetchCardByName(req.original);
-              results.set(req.original, src);
-              scryCache.set(req.original.toLowerCase(), src);
+              const images = await fetchCardByName(req.original);
+              if(images && images.front){
+                results.set(req.original, images);
+                scryCache.set(req.original.toLowerCase(), images);
+              }
             }catch(_){}
           }
         }
@@ -1484,15 +1517,20 @@
       const namesAll = parseDecklist(text);
       const ignoreBasics = !!(ignoreBasicsChk && ignoreBasicsChk.checked);
       const ignoreSnow = !!(ignoreSnowChk && ignoreSnowChk.checked);
+      const includeBacks = !!(includeDFCBacksChk && includeDFCBacksChk.checked);
       const names = filterBasics(namesAll, ignoreBasics, ignoreSnow);
       setStatus('Fetching deck images…');
 
       const mapping = await fetchManyByName(names);
       let placed = 0, missing = 0;
       for (const n of names){
-        const src = mapping.get(n) || scryCache.get(n.toLowerCase());
-        if (!src) { console.warn('No image for', n); missing++; continue; }
-        await addImageSrcToNextCell(src);
+        const found = mapping.get(n) || scryCache.get(n.toLowerCase());
+        const images = normalizeCardImages(found);
+        if (!images || !images.front) { console.warn('No image for', n); missing++; continue; }
+        await addImageSrcToNextCell(images.front);
+        if (includeBacks && images.back){
+          await addImageSrcToNextCell(images.back);
+        }
         setStatus(`(${++placed}/${names.length}) ${n}`);
       }
       setStatus(missing ? `Done — ${missing} not found` : 'Done');
