@@ -347,98 +347,11 @@
     </main>
   </div>
 
-  <!-- Decklist modal -->
-  <div id="deckModal" class="modal">
-    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="deckTitle">
-      <h2 id="deckTitle">Import decklist (Scryfall)</h2>
-      <p style="margin:0;color:#6b7280;font-size:13px">Format: <code>4 Lightning Bolt</code>, one per line. Optional set code with <code>[M11]</code> or <code>(M11)</code>. DFCs use the front face unless you include backs.</p>
-      <textarea id="deckText" placeholder="4 Lightning Bolt&#10;2 Snapcaster Mage&#10;1 Sol Ring"></textarea>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <label class="field" title="Skip Plains/Island/Swamp/Mountain/Forest/Wastes">
-          <input id="ignoreBasicsChk" type="checkbox" checked /> Ignore basic lands
-        </label>
-        <label class="field" title="Also skip Snow-Covered basics">
-          <input id="ignoreSnowChk" type="checkbox" checked /> Ignore snow-covered basics
-        </label>
-        <button id="importDeckBtn">Import</button>
-        <div class="right"></div>
-        <button id="closeDeckBtn" class="secondary">Close</button>
-      </div>
-    </div>
-  </div>
+  <!-- Decklist modal injected dynamically -->
+  <div id="deckModalRoot"></div>
 
-  <!-- Help modal -->
-  <div id="helpModal" class="modal">
-    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
-      <h2 id="helpTitle">Help & Hotkeys</h2>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;">
-        <div>
-          <h3 style="margin:8px 0 4px;font-size:14px;">Hotkeys</h3>
-          <ul class="help-list">
-            <li><b>Arrow keys</b> – Move focus between cells</li>
-            <li><b>Ctrl/⌘+← / Ctrl/⌘+→</b> – Prev/Next page (<b>[</b>/<b>]</b> also works)</li>
-            <li><b>Home</b> – First page (Fn+← on Mac)</li>
-            <li><b>End</b> – Last page (Fn+→ on Mac)</li>
-            <li><b>N</b> – Add page</li>
-            <li><b>Shift+Delete/Backspace</b> – Remove current page (confirm)</li>
-            <li><b>Ctrl/⌘+Delete/Backspace</b> – Clear current page</li>
-            <li><b>Ctrl/⌘+Shift+Delete/Backspace</b> – Clear ALL pages</li>
-            <li><b>Alt+Arrows</b> – Reorder focused cell</li>
-            <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
-            <li><b>Delete/Backspace</b> – Clear focused cell</li>
-            <li><b>Ctrl/⌘+C</b> – Copy focused cell image</li>
-            <li><b>Ctrl/⌘+V</b> – Paste images from your clipboard</li>
-            <li><b>1–9</b> – Focus a cell</li>
-            <li><b>Enter</b> in card field – Add card</li>
-            <li><b>P</b> – Print all pages</li>
-            <li><b>G</b> – Toggle guides</li>
-            <li><b>M</b> – Toggle cut marks</li>
-            <li><b>?</b> or <b>H</b> or <b>F1</b> – Open this help</li>
-            <li><b>Esc</b> – Close any open dialog</li>
-          </ul>
-        </div>
-
-        <div>
-          <h3 style="margin:12px 0 4px;font-size:14px;">How it works</h3>
-          <ul class="help-list">
-            <li>Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.</li>
-            <li>To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.</li>
-            <li>Double-click a cell to replace its image.</li>
-            <li>Paste screenshots or copied images (Ctrl/⌘+V) to auto-fill empty cells, or focus a cell first to target it.</li>
-            <li>New pages are created automatically when needed.</li>
-            <li><b>Print</b> prints all pages exact size.</li>
-          </ul>
-
-          <h3 style="margin:12px 0 4px;">Image fit: <i>Cover</i> vs <i>Contain</i></h3>
-          <ul class="help-list">
-            <li><b>Cover</b> — Scales the image so the cell is completely filled; extra edges may be cropped. Best for edge-to-edge proxies without letterboxing.</li>
-            <li><b>Contain</b> — Fits the whole image inside the cell; nothing is cropped, so you may see empty margins (“letterboxing”).</li>
-          </ul>
-
-          <h3 style="margin:12px 0 4px;">Decklist importer</h3>
-          <ul class="help-list">
-            <li>Paste one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>.</li>
-            <li>Double-faced cards use the front face (enable “Include DFC back faces” to add the reverse).</li>
-            <li>Use the checkboxes to skip basics and Snow-Covered basics.</li>
-            <li>Images are fetched via Scryfall and placed across pages automatically; unknown cards are skipped.</li>
-          </ul>
-        </div>
-      </div>
-
-      <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
-      <p class="footnote">⚠️ Right-click copy/paste is limited in the browser version. Use the desktop app for full clipboard support.</p>
-
-      <!-- Bottom row: Dark Mode + Advanced + Close -->
-      <div style="display:flex;gap:8px;align-items:center;">
-        <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
-        <button id="tuneBtn" class="secondary" title="Printer tuning (margins/offset)">Advanced</button>
-        <div class="right"></div>
-        <button id="closeHelpBtn" class="secondary">Close</button>
-        <div class="right footnote">© Occam Industries</div>
-      </div>
-    </div>
-  </div>
+  <!-- Help modal injected dynamically -->
+  <div id="helpModalRoot"></div>
 
   <!-- Tuning modal -->
   <div id="tuneModal" class="modal">
@@ -509,23 +422,25 @@
     var removePageBtn = document.getElementById('removePageBtn');
     var pageBadge = document.getElementById('pageBadge');
     var helpBtn = document.getElementById('helpBtn');
-    var helpModal = document.getElementById('helpModal');
-    var closeHelpBtn = document.getElementById('closeHelpBtn');
+    var helpModalRoot = document.getElementById('helpModalRoot');
+    var helpModal = null;
+    var closeHelpBtn = null;
     var cardSearch = document.getElementById('cardSearch');
     var addCardBtn = document.getElementById('addCardBtn');
     var decklistBtn = document.getElementById('decklistBtn');
-    var deckModal = document.getElementById('deckModal');
-    var deckText = document.getElementById('deckText');
-    var importDeckBtn = document.getElementById('importDeckBtn');
-    var closeDeckBtn = document.getElementById('closeDeckBtn');
-    var ignoreBasicsChk = document.getElementById('ignoreBasicsChk');
-    var ignoreSnowChk = document.getElementById('ignoreSnowChk');
+    var deckModalRoot = document.getElementById('deckModalRoot');
+    var deckModal = null;
+    var deckText = null;
+    var importDeckBtn = null;
+    var closeDeckBtn = null;
+    var ignoreBasicsChk = null;
+    var ignoreSnowChk = null;
     var includeDFCBacksChk = document.getElementById('includeDFCBacksChk');
     var ctxMenu = document.getElementById('ctxMenu');
 
     /* More refs */
-    var themeBtn = document.getElementById('themeBtn');
-    var tuneBtn = document.getElementById('tuneBtn');
+    var themeBtn = null;
+    var tuneBtn = null;
     var tuneModal = document.getElementById('tuneModal');
     var tuneTopIn = document.getElementById('tuneTopIn');
     var tuneLeftIn = document.getElementById('tuneLeftIn');
@@ -566,6 +481,191 @@
       m.classList.remove('open');
       if(m.__trapHandler){ m.removeEventListener('keydown', m.__trapHandler); m.__trapHandler=null; }
       if(lastFocus && typeof lastFocus.focus==='function'){ lastFocus.focus(); }
+    }
+
+    function setupModalBackdrop(m){
+      if (!m || m.__hasBackdrop) return;
+      m.addEventListener('click', function(e){
+        if (e.target === m){ closeModal(m); }
+      });
+      m.__hasBackdrop = true;
+    }
+
+    function ensureHelpModal(){
+      if (helpModal) return helpModal;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = `
+        <div id="helpModal" class="modal">
+          <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+            <h2 id="helpTitle">Help & Hotkeys</h2>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start;">
+              <div>
+                <h3 style="margin:8px 0 4px;font-size:14px;">Hotkeys</h3>
+                <ul class="help-list">
+                  <li><b>Arrow keys</b> – Move focus between cells</li>
+                  <li><b>Ctrl/⌘+← / Ctrl/⌘+→</b> – Prev/Next page (<b>[</b>/<b>]</b> also works)</li>
+                  <li><b>Home</b> – First page (Fn+← on Mac)</li>
+                  <li><b>End</b> – Last page (Fn+→ on Mac)</li>
+                  <li><b>N</b> – Add page</li>
+                  <li><b>Shift+Delete/Backspace</b> – Remove current page (confirm)</li>
+                  <li><b>Ctrl/⌘+Delete/Backspace</b> – Clear current page</li>
+                  <li><b>Ctrl/⌘+Shift+Delete/Backspace</b> – Clear ALL pages</li>
+                  <li><b>Alt+Arrows</b> – Reorder focused cell</li>
+                  <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
+                  <li><b>Delete/Backspace</b> – Clear focused cell</li>
+                  <li><b>Ctrl/⌘+C</b> – Copy focused cell image</li>
+                  <li><b>Ctrl/⌘+V</b> – Paste images from your clipboard</li>
+                  <li><b>1–9</b> – Focus a cell</li>
+                  <li><b>Enter</b> in card field – Add card</li>
+                  <li><b>P</b> – Print all pages</li>
+                  <li><b>G</b> – Toggle guides</li>
+                  <li><b>M</b> – Toggle cut marks</li>
+                  <li><b>?</b> or <b>H</b> or <b>F1</b> – Open this help</li>
+                  <li><b>Esc</b> – Close any open dialog</li>
+                </ul>
+              </div>
+
+              <div>
+                <h3 style="margin:12px 0 4px;font-size:14px;">How it works</h3>
+                <ul class="help-list">
+                  <li>Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.</li>
+                  <li>To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.</li>
+                  <li>Double-click a cell to replace its image.</li>
+                  <li>Paste screenshots or copied images (Ctrl/⌘+V) to auto-fill empty cells, or focus a cell first to target it.</li>
+                  <li>New pages are created automatically when needed.</li>
+                  <li><b>Print</b> prints all pages exact size.</li>
+                </ul>
+
+                <h3 style="margin:12px 0 4px;">Image fit: <i>Cover</i> vs <i>Contain</i></h3>
+                <ul class="help-list">
+                  <li><b>Cover</b> — Scales the image so the cell is completely filled; extra edges may be cropped. Best for edge-to-edge proxies without letterboxing.</li>
+                  <li><b>Contain</b> — Fits the whole image inside the cell; nothing is cropped, so you may see empty margins (“letterboxing”).</li>
+                </ul>
+
+                <h3 style="margin:12px 0 4px;">Decklist importer</h3>
+                <ul class="help-list">
+                  <li>Paste one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>.</li>
+                  <li>Double-faced cards use the front face (enable “Include DFC back faces” to add the reverse).</li>
+                  <li>Use the checkboxes to skip basics and Snow-Covered basics.</li>
+                  <li>Images are fetched via Scryfall and placed across pages automatically; unknown cards are skipped.</li>
+                </ul>
+              </div>
+            </div>
+
+            <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
+            <p class="footnote">⚠️ Right-click copy/paste is limited in the browser version. Use the desktop app for full clipboard support.</p>
+
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
+              <button id="tuneBtn" class="secondary" title="Printer tuning (margins/offset)">Advanced</button>
+              <div class="right"></div>
+              <button id="closeHelpBtn" class="secondary">Close</button>
+              <div class="right footnote">© Occam Industries</div>
+            </div>
+          </div>
+        </div>`;
+      const modal = tpl.content.firstElementChild;
+      (helpModalRoot || document.body).appendChild(modal);
+      helpModal = modal;
+      closeHelpBtn = helpModal.querySelector('#closeHelpBtn');
+      themeBtn = helpModal.querySelector('#themeBtn');
+      tuneBtn = helpModal.querySelector('#tuneBtn');
+      setupModalBackdrop(helpModal);
+
+      if (closeHelpBtn && !closeHelpBtn.__bound){
+        closeHelpBtn.addEventListener('click', function(){ closeModal(helpModal); });
+        closeHelpBtn.__bound = true;
+      }
+
+      bindThemeButton();
+      bindTuneButton();
+      setDark(document.documentElement.getAttribute('data-theme') === 'dark');
+
+      return helpModal;
+    }
+
+    function ensureDeckModal(){
+      if (deckModal) return deckModal;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = `
+        <div id="deckModal" class="modal">
+          <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="deckTitle">
+            <h2 id="deckTitle">Import decklist (Scryfall)</h2>
+            <p style="margin:0;color:#6b7280;font-size:13px">Format: <code>4 Lightning Bolt</code>, one per line. Optional set code with <code>[M11]</code> or <code>(M11)</code>. DFCs use the front face unless you include backs.</p>
+            <textarea id="deckText" placeholder="4 Lightning Bolt&#10;2 Snapcaster Mage&#10;1 Sol Ring"></textarea>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label class="field" title="Skip Plains/Island/Swamp/Mountain/Forest/Wastes">
+                <input id="ignoreBasicsChk" type="checkbox" checked /> Ignore basic lands
+              </label>
+              <label class="field" title="Also skip Snow-Covered basics">
+                <input id="ignoreSnowChk" type="checkbox" checked /> Ignore snow-covered basics
+              </label>
+              <button id="importDeckBtn">Import</button>
+              <div class="right"></div>
+              <button id="closeDeckBtn" class="secondary">Close</button>
+            </div>
+          </div>
+        </div>`;
+      const modal = tpl.content.firstElementChild;
+      (deckModalRoot || document.body).appendChild(modal);
+      deckModal = modal;
+      deckText = deckModal.querySelector('#deckText');
+      importDeckBtn = deckModal.querySelector('#importDeckBtn');
+      closeDeckBtn = deckModal.querySelector('#closeDeckBtn');
+      ignoreBasicsChk = deckModal.querySelector('#ignoreBasicsChk');
+      ignoreSnowChk = deckModal.querySelector('#ignoreSnowChk');
+      setupModalBackdrop(deckModal);
+
+      if (closeDeckBtn && !closeDeckBtn.__bound){
+        closeDeckBtn.addEventListener('click', function(){ closeModal(deckModal); });
+        closeDeckBtn.__bound = true;
+      }
+
+      if (deckModal && !deckModal.__wired){
+        deckModal.__wired = true;
+        const runImport = async () => {
+          const text = (deckText && deckText.value ? deckText.value : '').trim();
+          if (!text){
+            setStatus('Paste a decklist first');
+            if (deckText){ deckText.focus(); }
+            return;
+          }
+          if (!importDeckBtn) return;
+          importDeckBtn.disabled = true;
+          const prevLabel = importDeckBtn.textContent;
+          importDeckBtn.textContent = 'Importing…';
+          try {
+            await importDecklist(text);
+            closeModal(deckModal);
+            setStatus('Decklist imported');
+          } catch (err) {
+            console.error(err);
+            setStatus('Error importing deck: ' + (err && err.message ? err.message : err));
+          } finally {
+            importDeckBtn.disabled = false;
+            importDeckBtn.textContent = prevLabel;
+          }
+        };
+
+        if (importDeckBtn){
+          importDeckBtn.addEventListener('click', function(e){
+            e.preventDefault();
+            runImport();
+          });
+        }
+
+        if (deckText){
+          deckText.addEventListener('keydown', function(e){
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
+              e.preventDefault();
+              runImport();
+            }
+          });
+        }
+      }
+
+      return deckModal;
     }
 
     /* ===== inch/px helpers ===== */
@@ -1453,7 +1553,11 @@
         return;
       }
 
-      if(e.key==='F1' || e.key==='?' || e.key==='h' || e.key==='H'){ e.preventDefault(); openModal(helpModal); return; }
+      if(e.key==='F1' || e.key==='?' || e.key==='h' || e.key==='H'){
+        e.preventDefault();
+        openModal(ensureHelpModal());
+        return;
+      }
 
       if(e.key==='p' || e.key==='P'){ e.preventDefault(); printBtn.click(); return; }
       if(e.key==='g' || e.key==='G'){ toggleGuides.checked=!toggleGuides.checked; toggleGuides.dispatchEvent(new Event('change')); return; }
@@ -1559,48 +1663,18 @@
     });
 
     /* ===== Help/Deck/Tune modal binds ===== */
-    closeHelpBtn.addEventListener('click', ()=>closeModal(helpModal));
-    helpBtn.addEventListener('click', ()=>openModal(helpModal));
-
-    decklistBtn.addEventListener('click', function(){ openModal(deckModal); deckText.focus(); });
-    closeDeckBtn.addEventListener('click', function(){ closeModal(deckModal); });
-
-    /* Decklist: Import button wiring */
-    if (importDeckBtn) {
-      const runImport = async () => {
-        const text = (deckText.value || '').trim();
-        if (!text) {
-          setStatus('Paste a decklist first');
-          deckText.focus();
-          return;
-        }
-        importDeckBtn.disabled = true;
-        const prevLabel = importDeckBtn.textContent;
-        importDeckBtn.textContent = 'Importing…';
-        try {
-          await importDecklist(text);
-          closeModal(deckModal);
-          setStatus('Decklist imported');
-        } catch (err) {
-          console.error(err);
-          setStatus('Error importing deck: ' + (err && err.message ? err.message : err));
-        } finally {
-          importDeckBtn.disabled = false;
-          importDeckBtn.textContent = prevLabel;
-        }
-      };
-
-      importDeckBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        runImport();
+    if (helpBtn){
+      helpBtn.addEventListener('click', function(){
+        var modal = ensureHelpModal();
+        openModal(modal);
       });
+    }
 
-      // Ctrl/⌘+Enter from textarea
-      deckText.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-          e.preventDefault();
-          runImport();
-        }
+    if (decklistBtn){
+      decklistBtn.addEventListener('click', function(){
+        var modal = ensureDeckModal();
+        openModal(modal);
+        if (deckText){ deckText.focus(); }
       });
     }
 
@@ -1874,6 +1948,15 @@
     }
 
     /* ===== Theme + Tuning ===== */
+    function bindThemeButton(){
+      if (!themeBtn || themeBtn.__bound) return;
+      themeBtn.__bound = true;
+      themeBtn.addEventListener('click', function(){
+        var nowDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        setDark(!nowDark);
+      });
+    }
+
     function setDark(on){
       if(on){
         document.documentElement.setAttribute('data-theme','dark');
@@ -1889,12 +1972,7 @@
       var on = localStorage.getItem('mtgThemeDark') === '1';
       setDark(on);
     }
-    if (themeBtn){
-      themeBtn.addEventListener('click', function(){
-        var nowDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        setDark(!nowDark);
-      });
-    }
+    bindThemeButton();
 
     function readInchesVar(name, fallback){
       var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1945,6 +2023,12 @@
       }catch(_){}
     }
 
+    function bindTuneButton(){
+      if (!tuneBtn || tuneBtn.__bound) return;
+      tuneBtn.__bound = true;
+      tuneBtn.addEventListener('click', openTune);
+    }
+
     function openTune(){
       tuneTopIn.value   = readInchesVar('--grid-top', .25).toFixed(2);
       tuneLeftIn.value  = readInchesVar('--grid-left', 0).toFixed(2);
@@ -1962,7 +2046,7 @@
       tuneTopIn.focus();
     }
 
-    if (tuneBtn){ tuneBtn.addEventListener('click', openTune); }
+    bindTuneButton();
 
     if (saveTuneBtn){
       saveTuneBtn.addEventListener('click', function(){
@@ -2023,11 +2107,7 @@
         if (open){ e.preventDefault(); closeModal(open); }
       }
     });
-    Array.from(document.querySelectorAll('.modal')).forEach(function(m){
-      m.addEventListener('click', function(e){
-        if (e.target === m){ closeModal(m); }
-      });
-    });
+    setupModalBackdrop(tuneModal);
 
     /* ===== Context Menu ===== */
     function ctxIsOpen(){ return !!(ctxMenu && ctxMenu.classList.contains('open')); }
@@ -2279,7 +2359,7 @@
 
       const appSection = ctxSection('Application');
       appSection.appendChild(ctxItem('Print…', function(){ printBtn.click(); }, { kbd: 'P' }));
-      appSection.appendChild(ctxItem('Help & hotkeys', function(){ openModal(helpModal); }, { kbd: '?' }));
+      appSection.appendChild(ctxItem('Help & hotkeys', function(){ openModal(ensureHelpModal()); }, { kbd: '?' }));
 
       if (appSection.querySelectorAll('.ctx-item').length){
         if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
