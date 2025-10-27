@@ -1903,7 +1903,7 @@
 
     async function processImageFilesInBatches(files, handler){
       if(!files.length) return;
-      const idleFallback = (typeof requestIdleCallback === 'function') ? requestIdleCallback : null;
+      const idleScheduler = (typeof requestIdleCallback === 'function') ? requestIdleCallback : setTimeout;
       for(let start = 0; start < files.length; start += IMAGE_FILE_BATCH_SIZE){
         const batch = files.slice(start, start + IMAGE_FILE_BATCH_SIZE);
         for(const file of batch){
@@ -1930,7 +1930,7 @@
             console.error('Failed to process image file', err);
           }
         }
-        await new Promise(r => ((idleFallback || setTimeout))(r, 0));
+        await new Promise(r => idleScheduler === setTimeout ? idleScheduler(r, 0) : idleScheduler(r, { timeout: 0 }));
       }
     }
 
@@ -2498,7 +2498,7 @@
         setStatus(`(${++placed}/${names.length}) ${n}`);
         if (batchCount >= 16){
           batchCount = 0;
-          await new Promise(r => pause(r, 0));
+          await new Promise(r => pause === setTimeout ? pause(r, 0) : pause(r, { timeout: 0 }));
         }
       }
       setStatus(missing ? `Done — ${missing} not found` : 'Done');
