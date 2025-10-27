@@ -1361,11 +1361,14 @@
       return obj.image_uris.png || obj.image_uris.large || obj.image_uris.normal || null;
     }
 
+    const DOUBLE_FACED_LAYOUTS = new Set(['transform','modal_dfc','meld','battle','double_faced_token']);
+
     function makeCardImages(card){
       if(!card) return { front: null, back: null };
       const faces = Array.isArray(card.card_faces) ? card.card_faces : [];
       const front = pickImageFromUris(card) || pickImageFromUris(faces[0]) || null;
-      const back = faces.length > 1 ? (pickImageFromUris(faces[1]) || null) : null;
+      const isDoubleFaced = card.layout && DOUBLE_FACED_LAYOUTS.has(card.layout);
+      const back = isDoubleFaced && faces.length > 1 ? (pickImageFromUris(faces[1]) || null) : null;
       return { front, back };
     }
 
