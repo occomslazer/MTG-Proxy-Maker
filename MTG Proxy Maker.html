@@ -457,6 +457,467 @@
     const BASE_W_IN = 2.5;
     const BASE_H_IN = 3.5;
 
+    /* ===== Environment & storage helpers ===== */
+    const ELECTRON_DETECTED = typeof window !== 'undefined'
+      && !!(window.process && window.process.versions && window.process.versions.electron);
+
+    function isDataUrl(value){
+      return typeof value === 'string' && /^data:/i.test(value);
+    }
+
+    function dataUrlToBlob(dataUrl){
+      if (typeof dataUrl !== 'string') return null;
+      const parts = dataUrl.split(',');
+      if (parts.length < 2) return null;
+      const match = /^data:([^;]+);base64$/i.exec(parts[0]);
+      const mime = match ? match[1] : 'application/octet-stream';
+      try{
+        const binary = atob(parts[1]);
+        const len = binary.length;
+        const buffer = new Uint8Array(len);
+        for(let i=0;i<len;i++) buffer[i] = binary.charCodeAt(i);
+        return new Blob([buffer], { type: mime });
+      }catch(_){
+        return null;
+      }
+    }
+
+    function readFileAsDataURL(file){
+      return new Promise(function(resolve, reject){
+        const reader = new FileReader();
+        reader.onerror = function(){ reject(reader.error || new Error('Failed to read file')); };
+        reader.onload = function(){ resolve(reader.result); };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function waitForImageLoad(src){
+      return new Promise(function(resolve, reject){
+        const img = new Image();
+        img.onload = function(){ resolve({ width: img.naturalWidth || 0, height: img.naturalHeight || 0 }); };
+        img.onerror = function(){ reject(new Error('Invalid image data')); };
+        img.src = src;
+      });
+    }
+
+    function makeRandomKey(){
+      if (typeof crypto !== 'undefined' && crypto.randomUUID){
+        return crypto.randomUUID();
+      }
+      if (typeof crypto !== 'undefined' && crypto.getRandomValues){
+        const buf = new Uint8Array(16);
+        crypto.getRandomValues(buf);
+        return Array.from(buf).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+      }
+      return Date.now().toString(36) + Math.random().toString(16).slice(2);
+    }
+
+    function createIndexedDbStore(){
+      const DB_NAME = 'mtgProxyImages';
+      const STORE_NAME = 'images';
+      let dbPromise = null;
+      const urlCache = new Map();
+
+      function openDB(){
+        if (dbPromise) return dbPromise;
+        if (typeof indexedDB === 'undefined') throw new Error('IndexedDB unavailable');
+        dbPromise = new Promise(function(resolve, reject){
+          const req = indexedDB.open(DB_NAME, 1);
+          req.onerror = function(){ reject(req.error || new Error('IndexedDB open failed')); };
+          req.onupgradeneeded = function(){
+            const db = req.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)){
+              db.createObjectStore(STORE_NAME);
+            }
+          };
+          req.onsuccess = function(){ resolve(req.result); };
+        });
+        return dbPromise;
+      }
+
+      function withStore(mode, cb){
+        return openDB().then(function(db){
+          return new Promise(function(resolve, reject){
+            const tx = db.transaction(STORE_NAME, mode);
+            tx.onabort = function(){ reject(tx.error || new Error('IndexedDB transaction aborted')); };
+            tx.onerror = function(){ reject(tx.error || new Error('IndexedDB transaction failed')); };
+            const store = tx.objectStore(STORE_NAME);
+            cb(store, resolve, reject);
+          });
+        });
+      }
+
+      function revokeUrl(key){
+        const url = urlCache.get(key);
+        if (url){
+          try{ URL.revokeObjectURL(url); }catch(_){ }
+          urlCache.delete(key);
+        }
+      }
+
+      return {
+        ready: openDB().catch(function(err){ console.error('IndexedDB init failed', err); }),
+        async storeDataUrl(dataUrl){
+          const blob = dataUrlToBlob(dataUrl);
+          if (!blob) throw new Error('Invalid image data');
+          return this.storeBlob(blob);
+        },
+        async storeBlob(blob){
+          const result = await withStore('readwrite', function(store, resolve, reject){
+            const key = makeRandomKey();
+            const req = store.put(blob, key);
+            req.onsuccess = function(){ resolve({ key: key, mime: blob.type || null }); };
+            req.onerror = function(){ reject(req.error || new Error('Failed to store blob')); };
+          });
+          const url = URL.createObjectURL(blob);
+          urlCache.set(result.key, url);
+          return { key: result.key, mime: result.mime, url: url };
+        },
+        async getUrl(key){
+          if (urlCache.has(key)) return urlCache.get(key);
+          const blob = await this.getBlob(key);
+          const url = URL.createObjectURL(blob);
+          urlCache.set(key, url);
+          return url;
+        },
+        async getBlob(key){
+          const blob = await withStore('readonly', function(store, resolve, reject){
+            const req = store.get(key);
+            req.onsuccess = function(){ resolve(req.result || null); };
+            req.onerror = function(){ reject(req.error || new Error('Failed to read blob')); };
+          });
+          if (!blob) throw new Error('Missing image data');
+          return blob;
+        },
+        async delete(key){
+          revokeUrl(key);
+          try{
+            await withStore('readwrite', function(store, resolve, reject){
+              const req = store.delete(key);
+              req.onsuccess = function(){ resolve(); };
+              req.onerror = function(){ reject(req.error || new Error('Failed to delete blob')); };
+            });
+          }catch(err){
+            if (!err || err.name !== 'NotFoundError'){
+              throw err;
+            }
+          }
+        },
+        revokeUrl: revokeUrl
+      };
+    }
+
+    function createMemoryStore(){
+      const storage = new Map();
+      const urlCache = new Map();
+
+      function revokeUrl(key){
+        const url = urlCache.get(key);
+        if (url){
+          try{ URL.revokeObjectURL(url); }catch(_){ }
+          urlCache.delete(key);
+        }
+      }
+
+      return {
+        ready: Promise.resolve(),
+        async storeDataUrl(dataUrl){
+          const blob = dataUrlToBlob(dataUrl);
+          if (!blob) throw new Error('Invalid image data');
+          return this.storeBlob(blob);
+        },
+        async storeBlob(blob){
+          const key = makeRandomKey();
+          storage.set(key, blob);
+          const url = URL.createObjectURL(blob);
+          urlCache.set(key, url);
+          return { key: key, mime: blob.type || null, url: url };
+        },
+        async getUrl(key){
+          if (urlCache.has(key)) return urlCache.get(key);
+          const blob = storage.get(key);
+          if (!blob) throw new Error('Missing image data');
+          const url = URL.createObjectURL(blob);
+          urlCache.set(key, url);
+          return url;
+        },
+        async getBlob(key){
+          const blob = storage.get(key);
+          if (!blob) throw new Error('Missing image data');
+          return blob;
+        },
+        async delete(key){
+          revokeUrl(key);
+          storage.delete(key);
+        },
+        revokeUrl: revokeUrl
+      };
+    }
+
+    function createElectronStore(){
+      const requireFn = (typeof window !== 'undefined' && typeof window.require === 'function') ? window.require : null;
+      if (!requireFn) throw new Error('Electron require not available');
+
+      let electron = null, fs = null, path = null, urlMod = null, fsp = null, BufferCtor = null;
+      try{ electron = requireFn('electron'); }catch(_){ }
+      try{ fs = requireFn('fs'); }catch(_){ }
+      try{ path = requireFn('path'); }catch(_){ }
+      try{ urlMod = requireFn('url'); }catch(_){ }
+      if (!electron || !fs || !path || !urlMod) throw new Error('Electron modules unavailable');
+
+      fsp = fs.promises;
+      if (!fsp){
+        try{ fsp = requireFn('fs/promises'); }catch(_){ }
+      }
+      if (!fsp) throw new Error('fs.promises unavailable');
+
+      BufferCtor = (typeof Buffer !== 'undefined') ? Buffer : null;
+      if (!BufferCtor){
+        try{ BufferCtor = requireFn('buffer').Buffer; }catch(_){ }
+      }
+      if (!BufferCtor) throw new Error('Buffer unavailable');
+
+      const { pathToFileURL } = urlMod;
+      let app = null;
+      if (electron.app && typeof electron.app.getPath === 'function'){ app = electron.app; }
+      else if (electron.remote && electron.remote.app){ app = electron.remote.app; }
+      else {
+        try{
+          const remote = requireFn('@electron/remote');
+          if (remote && remote.app) app = remote.app;
+        }catch(_){ }
+      }
+      const ipcRenderer = electron.ipcRenderer || null;
+
+      async function resolveUserData(){
+        if (app && typeof app.getPath === 'function'){ return app.getPath('userData'); }
+        if (ipcRenderer){
+          if (typeof ipcRenderer.invoke === 'function'){
+            try{ return await ipcRenderer.invoke('mtgProxy:getPath', 'userData'); }catch(_){ }
+          }
+          if (typeof ipcRenderer.sendSync === 'function'){
+            try{ return ipcRenderer.sendSync('mtgProxy:getPath', 'userData'); }catch(_){ }
+          }
+        }
+        throw new Error('Cannot resolve Electron userData path');
+      }
+
+      let readyData = null;
+      const readyPromise = (async function(){
+        const userData = await resolveUserData();
+        const dir = path.join(userData, 'images');
+        try{
+          await fsp.mkdir(dir, { recursive: true });
+        }catch(err){
+          if (!err || err.code !== 'EEXIST') throw err;
+        }
+        readyData = { baseDir: dir };
+        return readyData;
+      })();
+
+      const urlCache = new Map();
+
+      function ensureReady(){
+        return readyPromise.then(function(){ return readyData; });
+      }
+
+      function toFileUrl(fullPath){
+        if (pathToFileURL){
+          try{ return pathToFileURL(fullPath).toString(); }catch(_){ }
+        }
+        const normalized = fullPath.replace(/\\/g, '/');
+        return 'file://' + (normalized.startsWith('/') ? normalized : '/' + normalized);
+      }
+
+      function guessExt(mime){
+        const type = String(mime || '').toLowerCase();
+        if (type === 'image/png') return 'png';
+        if (type === 'image/jpeg' || type === 'image/jpg') return 'jpg';
+        if (type === 'image/gif') return 'gif';
+        if (type === 'image/webp') return 'webp';
+        if (type === 'image/avif') return 'avif';
+        if (type === 'image/bmp') return 'bmp';
+        if (type === 'image/tiff') return 'tiff';
+        if (type === 'image/svg+xml') return 'svg';
+        return 'bin';
+      }
+
+      function mimeFromExt(ext){
+        const lower = String(ext || '').toLowerCase();
+        switch(lower){
+          case 'png': return 'image/png';
+          case 'jpg':
+          case 'jpeg': return 'image/jpeg';
+          case 'gif': return 'image/gif';
+          case 'webp': return 'image/webp';
+          case 'avif': return 'image/avif';
+          case 'bmp': return 'image/bmp';
+          case 'tif':
+          case 'tiff': return 'image/tiff';
+          case 'svg': return 'image/svg+xml';
+          default: return null;
+        }
+      }
+
+      async function storeBuffer(buffer, mimeHint){
+        const ctx = await ensureReady();
+        const ext = guessExt(mimeHint);
+        const key = makeRandomKey() + '.' + ext;
+        const filePath = path.join(ctx.baseDir, key);
+        await fsp.writeFile(filePath, buffer);
+        const url = toFileUrl(filePath);
+        urlCache.set(key, url);
+        const mime = mimeHint || mimeFromExt(ext);
+        return { key: key, mime: mime || mimeHint || null, url: url };
+      }
+
+      function revokeUrl(key){
+        urlCache.delete(key);
+      }
+
+      return {
+        ready: readyPromise.catch(function(err){ console.error('Electron store init failed', err); throw err; }),
+        async storeDataUrl(dataUrl){
+          const blob = dataUrlToBlob(dataUrl);
+          if (!blob) throw new Error('Invalid image data');
+          const array = await blob.arrayBuffer();
+          const buffer = BufferCtor.from(array);
+          return storeBuffer(buffer, blob.type || 'image/png');
+        },
+        async storeBlob(blob, mimeHint){
+          const array = await blob.arrayBuffer();
+          const buffer = BufferCtor.from(array);
+          return storeBuffer(buffer, blob.type || mimeHint || 'application/octet-stream');
+        },
+        async getUrl(key){
+          if (urlCache.has(key)) return urlCache.get(key);
+          const ctx = await ensureReady();
+          const filePath = path.join(ctx.baseDir, key);
+          const url = toFileUrl(filePath);
+          urlCache.set(key, url);
+          return url;
+        },
+        async getBlob(key, mimeHint){
+          const ctx = await ensureReady();
+          const filePath = path.join(ctx.baseDir, key);
+          const buffer = await fsp.readFile(filePath);
+          const ext = path.extname(filePath).replace(/^\./,'');
+          const mime = mimeHint || mimeFromExt(ext) || 'application/octet-stream';
+          return new Blob([buffer], { type: mime });
+        },
+        async delete(key){
+          revokeUrl(key);
+          try{
+            const ctx = await ensureReady();
+            const filePath = path.join(ctx.baseDir, key);
+            await fsp.unlink(filePath);
+          }catch(err){
+            if (!err || (err.code !== 'ENOENT' && err.code !== 'ENOTDIR')){
+              throw err;
+            }
+          }
+        },
+        revokeUrl: revokeUrl
+      };
+    }
+
+    function createImageStore(){
+      if (ELECTRON_DETECTED){
+        try{
+          return createElectronStore();
+        }catch(err){
+          console.warn('Electron storage unavailable, falling back', err);
+        }
+      }
+      try{
+        return createIndexedDbStore();
+      }catch(err){
+        console.warn('IndexedDB storage unavailable, using in-memory store', err);
+      }
+      return createMemoryStore();
+    }
+
+    const imageStore = createImageStore();
+    const imageStoreReady = imageStore && imageStore.ready
+      ? imageStore.ready.catch(function(err){ console.error('Image store initialization failed', err); })
+      : Promise.resolve();
+
+    function createUrlItem(url){
+      return { type: 'url', url: url };
+    }
+
+    function createStoredItemFromKey(key, mime){
+      return { type: 'stored', key: key, mime: mime || null, resolvedSrc: null };
+    }
+
+    async function createStoredItemFromDataUrl(dataUrl){
+      const stored = await imageStore.storeDataUrl(dataUrl);
+      return {
+        type: 'stored',
+        key: stored.key,
+        mime: stored.mime || null,
+        resolvedSrc: stored.url || null
+      };
+    }
+
+    async function createStoredItemFromBlob(blob, mimeHint){
+      const stored = await imageStore.storeBlob(blob, mimeHint);
+      return {
+        type: 'stored',
+        key: stored.key,
+        mime: stored.mime || blob.type || mimeHint || null,
+        resolvedSrc: stored.url || null
+      };
+    }
+
+    async function createItemFromSrc(src){
+      if (typeof src !== 'string') return null;
+      if (isDataUrl(src)){
+        return createStoredItemFromDataUrl(src);
+      }
+      return createUrlItem(src);
+    }
+
+    async function cloneItem(item){
+      if (!item) return null;
+      if (item.type === 'stored' && item.key){
+        try{
+          const blob = await imageStore.getBlob(item.key, item.mime || null);
+          return createStoredItemFromBlob(blob, item.mime || null);
+        }catch(err){
+          console.error('Failed to clone stored image', err);
+          return null;
+        }
+      }
+      if (item.type === 'url' && item.url){
+        return createUrlItem(item.url);
+      }
+      if (item.url){
+        return createUrlItem(item.url);
+      }
+      return null;
+    }
+
+    function discardItem(item){
+      if (!item || typeof item !== 'object' || item.__disposed) return;
+      item.__disposed = true;
+      if (item.type === 'stored' && item.key){
+        if (typeof imageStore.revokeUrl === 'function'){
+          try{ imageStore.revokeUrl(item.key); }catch(_){ }
+        }
+        if (typeof imageStore.delete === 'function'){
+          Promise.resolve(imageStore.delete(item.key)).catch(function(err){
+            console.error('Failed to delete stored image', err);
+          });
+        }
+      }
+    }
+
+    function disposePageItems(model){
+      if (!model || !Array.isArray(model.items)) return;
+      model.items.forEach(discardItem);
+    }
+
     /* ===== Modal focus management (trap + restore) ===== */
     let lastFocus = null;
     function trapFocus(m){
@@ -924,39 +1385,55 @@
       setGhostDuplicateStyle(false);
     }
 
-    function onDragEnd(e){
+    async function onDragEnd(e){
       if (!activeDrag) return;
 
-      let hover = activeDrag.lastHover;
-      if (!hover) {
-        const at = document.elementFromPoint(e.clientX, e.clientY);
-        hover = at && at.closest ? at.closest('.cell') : null;
-      }
+      try{
+        let hover = activeDrag.lastHover;
+        if (!hover) {
+          const at = document.elementFromPoint(e.clientX, e.clientY);
+          hover = at && at.closest ? at.closest('.cell') : null;
+        }
 
-      if (hover){
-        const dst = resolveModelFromCellEl(hover);
-        if (dst) {
-          if (duplicateKeyDown){
-            const a = activeDrag.srcModel.items[activeDrag.srcIdx];
-            if (a){
-              dst.model.items[dst.index] = { src: a.src };
-              renderCell(dst.model, dst.index);
+        if (hover){
+          const dst = resolveModelFromCellEl(hover);
+          if (dst) {
+            if (duplicateKeyDown){
+              const a = activeDrag.srcModel.items[activeDrag.srcIdx];
+              if (a){
+                try{
+                  const clone = await cloneItem(a);
+                  if (clone){
+                    const prev = dst.model.items[dst.index];
+                    if (prev && prev !== clone){ discardItem(prev); }
+                    dst.model.items[dst.index] = clone;
+                    renderCell(dst.model, dst.index);
+                    saveState();
+                  }
+                }catch(err){
+                  console.error('Failed to duplicate image', err);
+                }
+              }
+            } else {
+              handleInternalDrop(activeDrag.srcModel, activeDrag.srcIdx, dst.model, dst.index);
+            }
+          }
+        } else {
+          if (!duplicateKeyDown){
+            const m = activeDrag.srcModel;
+            const i = activeDrag.srcIdx;
+            if (m.items[i]){
+              discardItem(m.items[i]);
+              m.items[i] = null;
+              renderCell(m, i);
               saveState();
             }
-          } else {
-            handleInternalDrop(activeDrag.srcModel, activeDrag.srcIdx, dst.model, dst.index);
           }
         }
-      } else {
-        if (!duplicateKeyDown){
-          const m = activeDrag.srcModel;
-          const i = activeDrag.srcIdx;
-          if (m.items[i]){ m.items[i] = null; renderCell(m, i); saveState(); }
-        }
+      } finally {
+        finishDragCleanup();
+        window.removeEventListener('pointermove', onDragMove);
       }
-
-      finishDragCleanup();
-      window.removeEventListener('pointermove', onDragMove);
     }
 
     function onDragCancel(){
@@ -1061,6 +1538,23 @@
       el.style.height = d.h+'px';
     }
 
+    async function resolveItemSrc(item){
+      if (!item) return null;
+      if (item.type === 'stored' && item.key){
+        if (item.resolvedSrc) return item.resolvedSrc;
+        const url = await imageStore.getUrl(item.key, item.mime || null);
+        item.resolvedSrc = url;
+        return url;
+      }
+      if (item.type === 'url' && item.url){
+        return item.url;
+      }
+      if (item.url){
+        return item.url;
+      }
+      return null;
+    }
+
     function renderCell(model, i){
       const cell = model.cells[i];
       cell.innerHTML='';
@@ -1075,11 +1569,31 @@
 
       cell.setAttribute('aria-label','Occupied cell ' + (i+1));
       const el=document.createElement('img');
-      el.src = data.src;
+      el.alt = '';
       el.draggable = false;
       el.addEventListener('dragstart', e => e.preventDefault());
-      el.onload = function(){ fitImage(el); };
+      const token = {};
+      data.__renderToken = token;
+      el.onload = function(){
+        if (data.__renderToken !== token) return;
+        fitImage(el);
+      };
       cell.appendChild(el);
+
+      Promise.resolve(resolveItemSrc(data)).then(function(src){
+        if (!src){
+          throw new Error('Missing image source');
+        }
+        if (data.__renderToken !== token) return;
+        el.src = src;
+      }).catch(function(err){
+        console.error('Failed to render image', err);
+        if (data.__renderToken !== token) return;
+        discardItem(data);
+        model.items[i] = null;
+        renderCell(model, i);
+        saveState();
+      });
     }
 
     function renderGrid(model){ for(var i=0;i<CELLS_PER_PAGE;i++) renderCell(model,i); }
@@ -1156,7 +1670,16 @@
 
     /* ===== Files & placement ===== */
     var targetIndexForFile = null; // {page,index}
-    function placeImage(model, idx, src){ model.items[idx] = {src: src}; renderCell(model, idx); saveState(); }
+    function placeImage(model, idx, item){
+      if (!model || !model.items) return;
+      const prev = model.items[idx];
+      if (prev && prev !== item){
+        discardItem(prev);
+      }
+      model.items[idx] = item;
+      renderCell(model, idx);
+      saveState();
+    }
 
     fileInput.addEventListener('change', function(e){
       var selected = Array.from(e.target.files||[]).filter(f=>f.type.indexOf('image/')===0);
@@ -1223,41 +1746,46 @@
       return !!(navigator.clipboard && typeof navigator.clipboard.read === 'function');
     }
 
-    function dataUrlToBlob(dataUrl){
-      const parts = dataUrl.split(',');
-      if(parts.length < 2) return null;
-      const match = /^data:([^;]+);base64$/i.exec(parts[0]);
-      const mime = match ? match[1] : 'image/png';
-      const binary = atob(parts[1]);
-      const len = binary.length;
-      const buffer = new Uint8Array(len);
-      for(let i=0;i<len;i++) buffer[i] = binary.charCodeAt(i);
-      return new Blob([buffer], { type: mime });
-    }
-
     async function copyCellImage(model, index){
       if(!clipboardCanWriteImage()){
         setStatus('Clipboard copy not supported');
         return false;
       }
-      if(!model || !model.items || !model.items[index] || !model.items[index].src){
+      if(!model || !model.items || !model.items[index]){
         setStatus('No image to copy');
         return false;
       }
-      const src = model.items[index].src;
+      const itemData = model.items[index];
+      let blob = null;
       try{
-        let blob = null;
-        if(src.startsWith('data:')){
-          blob = dataUrlToBlob(src);
-        } else {
-          const resp = await fetch(src, { mode: 'cors' });
+        if(itemData.type === 'stored' && itemData.key){
+          blob = await imageStore.getBlob(itemData.key, itemData.mime || null);
+        } else if (itemData.type === 'url' && itemData.url){
+          const resp = await fetch(itemData.url, { mode: 'cors' });
           if(!resp.ok) throw new Error('Image fetch failed');
           blob = await resp.blob();
+        } else if (itemData.url){
+          const resp = await fetch(itemData.url, { mode: 'cors' });
+          if(!resp.ok) throw new Error('Image fetch failed');
+          blob = await resp.blob();
+        } else if (itemData.resolvedSrc && isDataUrl(itemData.resolvedSrc)){
+          blob = dataUrlToBlob(itemData.resolvedSrc);
         }
-        if(!blob) throw new Error('No image data');
+      }catch(err){
+        console.error('Copy failed', err);
+        setStatus('Copy failed (clipboard permissions?)');
+        return false;
+      }
+
+      if(!blob){
+        setStatus('No image to copy');
+        return false;
+      }
+
+      try{
         const type = blob.type || 'image/png';
-        const item = new ClipboardItem({ [type]: blob });
-        await navigator.clipboard.write([item]);
+        const clipItem = new ClipboardItem({ [type]: blob });
+        await navigator.clipboard.write([clipItem]);
         setStatus('Copied image to clipboard');
         return true;
       }catch(err){
@@ -1503,6 +2031,7 @@
         if(!confirm('This page has images. Remove it?')) return false;
       }
       var idx = currentPage;
+      disposePageItems(m);
       pageWrap.removeChild(m.pageEl);
       pages.splice(idx, 1);
       showPage(Math.min(idx, pages.length - 1));
@@ -1512,6 +2041,7 @@
 
     function clearCurrentPage(){
       var m=getCurrent();
+      disposePageItems(m);
       m.items = new Array(CELLS_PER_PAGE).fill(null);
       renderGrid(m);
       saveState();
@@ -1524,6 +2054,7 @@
       if (forceConfirm || hasAny){
         if(!confirm(msg)) return;
       }
+      pages.forEach(disposePageItems);
       try{ localStorage.removeItem('mtgProxyPages'); }catch(_){}
       pageWrap.innerHTML = '';
       pages.length = 0;
@@ -1668,7 +2199,12 @@
         if(cell){
           const idx = Number(cell.dataset.index);
           const m = getCurrent();
-          m.items[idx] = null; renderCell(m, idx); saveState();
+          if (m.items[idx]){
+            discardItem(m.items[idx]);
+            m.items[idx] = null;
+            renderCell(m, idx);
+            saveState();
+          }
           e.preventDefault();
           return;
         }
@@ -1853,8 +2389,15 @@
 
     async function addImageSrcToNextCell(src){
       var pos = nextEmptySlot(currentPage) || ensurePageForAppend();
-      var m=pages[pos.page];
-      placeImage(m, pos.index, src);
+      var m = pages[pos.page];
+      if (!m) return;
+      try{
+        const item = await createItemFromSrc(src);
+        if (!item) return;
+        placeImage(m, pos.index, item);
+      }catch(err){
+        console.error('Failed to add image to cell', err);
+      }
     }
 
     async function fetchManyByName(names){
@@ -1971,25 +2514,98 @@
     let statusTimer = null;
     function setStatus(msg){ clearTimeout(statusTimer); statusTimer = setTimeout(()=>{ statusEl.textContent = msg||'Ready'; }, 16); }
 
+    function serializeItem(item){
+      if (!item || typeof item !== 'object') return null;
+      if (item.type === 'stored' && item.key){
+        return { type: 'stored', key: item.key, mime: item.mime || null };
+      }
+      if (item.type === 'url' && item.url){
+        return { type: 'url', url: item.url };
+      }
+      if (item.url){
+        return { type: 'url', url: item.url };
+      }
+      return null;
+    }
+
     function saveState(){
       try{
-        const state = { pages: pages.map(p => p.items), current: currentPage };
+        const pagesState = pages.map(function(page){
+          const items = Array.isArray(page.items) ? page.items : [];
+          const result = [];
+          for (let i=0;i<CELLS_PER_PAGE;i++){
+            result.push(serializeItem(items[i] || null));
+          }
+          return result;
+        });
+        const state = { pages: pagesState, current: currentPage };
         localStorage.setItem('mtgProxyPages', JSON.stringify(state));
-      }catch(_){}
+      }catch(err){
+        console.error('Failed to save state', err);
+      }
     }
-    function loadState(){
+
+    async function loadState(){
       try{
+        await imageStoreReady;
         const raw = localStorage.getItem('mtgProxyPages');
         if (!raw) return false;
         const state = JSON.parse(raw);
         if (!state || !Array.isArray(state.pages) || !state.pages.length) return false;
-        pageWrap.innerHTML = ''; pages.length = 0;
+        pageWrap.innerHTML = '';
+        pages.length = 0;
+        let mutated = false;
         for (let i=0;i<state.pages.length;i++){
-          const m = createPage(); pages.push(m); m.items = state.pages[i]; renderGrid(m);
+          const m = createPage();
+          pages.push(m);
+          const source = Array.isArray(state.pages[i]) ? state.pages[i] : [];
+          const items = new Array(CELLS_PER_PAGE).fill(null);
+          for (let j=0;j<CELLS_PER_PAGE;j++){
+            const entry = source[j];
+            if (!entry){
+              items[j] = null;
+              continue;
+            }
+            try{
+              if (entry.type === 'stored' && entry.key){
+                items[j] = createStoredItemFromKey(entry.key, entry.mime || null);
+              } else if (entry.type === 'url' && entry.url){
+                items[j] = createUrlItem(entry.url);
+              } else if (entry.src && typeof entry.src === 'string'){
+                if (isDataUrl(entry.src)){
+                  items[j] = await createStoredItemFromDataUrl(entry.src);
+                  mutated = true;
+                } else {
+                  items[j] = createUrlItem(entry.src);
+                  mutated = true;
+                }
+              } else if (typeof entry === 'string'){
+                if (isDataUrl(entry)){
+                  items[j] = await createStoredItemFromDataUrl(entry);
+                  mutated = true;
+                } else {
+                  items[j] = createUrlItem(entry);
+                  mutated = true;
+                }
+              } else {
+                items[j] = null;
+              }
+            }catch(err){
+              console.error('Failed to restore image', err);
+              items[j] = null;
+              mutated = true;
+            }
+          }
+          m.items = items;
+          renderGrid(m);
         }
         showPage(Math.min(Math.max(0, state.current||0), pages.length-1));
+        if (mutated){ saveState(); }
         return true;
-      }catch(_){ return false; }
+      }catch(err){
+        console.error('Failed to load state', err);
+        return false;
+      }
     }
 
     /* ===== Theme + Tuning ===== */
@@ -2285,7 +2901,7 @@
       return true;
     }
 
-    function duplicateToNextEmpty(model, index){
+    async function duplicateToNextEmpty(model, index){
       if (!model || !model.items[index]) return null;
       const src = model.items[index];
       const pageIdx = pages.indexOf(model);
@@ -2296,10 +2912,19 @@
       }
       const dstModel = pages[slot.page];
       if (!dstModel) return null;
-      dstModel.items[slot.index] = { src: src.src };
-      renderCell(dstModel, slot.index);
-      saveState();
-      return slot;
+      try{
+        const clone = await cloneItem(src);
+        if (!clone) return null;
+        const prev = dstModel.items[slot.index];
+        if (prev && prev !== clone){ discardItem(prev); }
+        dstModel.items[slot.index] = clone;
+        renderCell(dstModel, slot.index);
+        saveState();
+        return slot;
+      }catch(err){
+        console.error('Failed to duplicate image', err);
+        return null;
+      }
     }
 
     function buildCellMenu(model, index, rootEl){
@@ -2316,6 +2941,8 @@
         duplicateToNextEmpty(model, index);
       }, { disabled: !hasImage }));
       cellSection.appendChild(ctxItem('Clear cell', function(){
+        if (!model.items[index]) return;
+        discardItem(model.items[index]);
         model.items[index] = null;
         renderCell(model, index);
         saveState();
@@ -2517,12 +3144,24 @@
     });
 
     /* ===== Init ===== */
-    pages.push(createPage());
-    renderGrid(pages[0]);
-    if (!loadState()) showPage(0);
-    applyCutOverlay(); doUpdate();
-    loadTheme();
-    loadTuning();
+    (async function init(){
+      const firstPage = createPage();
+      pages.push(firstPage);
+      renderGrid(firstPage);
+      let loaded = false;
+      try{
+        loaded = await loadState();
+      }catch(err){
+        console.error('Failed to load saved state', err);
+      }
+      if (!loaded){
+        showPage(0);
+      }
+      applyCutOverlay();
+      doUpdate();
+      loadTheme();
+      loadTuning();
+    })();
 
     // Expose for debugging
     window.__mtgDebug = { pages };
