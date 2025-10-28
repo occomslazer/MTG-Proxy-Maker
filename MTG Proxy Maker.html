@@ -1013,16 +1013,9 @@
         'Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.',
         'To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.',
         'Double-click a cell to replace its image.',
-        ELECTRON_DETECTED
-          ? 'Clipboard paste works without extra prompts in the desktop app and supports images by default.'
-          : 'Clipboard paste works in supported browsers (you may need to grant permission). The <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> remains available if your browser doesn’t allow it.',
         'New pages are created automatically when needed.',
         '<b>Print</b> prints all pages exact size.'
       ];
-
-      const clipboardFootnote = ELECTRON_DETECTED
-        ? '🖥️ Clipboard features (copy/paste, right-click actions) use the system clipboard directly in the desktop app and are always enabled.'
-        : '⚠️ Clipboard features (copy/paste, right-click actions) require a browser that supports the image clipboard APIs and may prompt for permission. If it’s unavailable, the <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> still offers full support.';
 
       tpl.innerHTML = `
         <div id="helpModal" class="modal">
@@ -1060,7 +1053,6 @@
             </div>
 
             <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
-            <p class="footnote">${clipboardFootnote}</p>
 
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
