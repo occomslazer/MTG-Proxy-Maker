@@ -1901,18 +1901,48 @@
       });
     });
 
+    function fileIdentityKey(file){
+      if(!file) return '';
+      const name = typeof file.name === 'string' ? file.name : '';
+      const size = typeof file.size === 'number' ? file.size : 0;
+      const type = typeof file.type === 'string' ? file.type : '';
+      const lastModified = typeof file.lastModified === 'number' ? file.lastModified : 0;
+      // Clipboard-provided File objects sometimes report unique lastModified
+      // timestamps for each representation (DataTransfer.files vs.
+      // DataTransferItem.getAsFile), even when they wrap the same binary
+      // payload. That causes duplicates when we build the identity key from
+      // the full metadata tuple. Use the timestamp only when it contributes
+      // additional information beyond name/size/type.
+      const parts = [name, size, type];
+      if(lastModified && (name || type)){ parts.push(lastModified); }
+      return parts.join('::');
+    }
+
     function collectImageFilesFromClipboardData(cd){
       const files = [];
       if(!cd) return files;
+
+      const seen = new Set();
+      function addFile(file){
+        if(!file || !looksLikeImageFile(file)) return;
+        const key = fileIdentityKey(file);
+        if(seen.has(key)) return;
+        seen.add(key);
+        files.push(file);
+      }
+
       if(cd.files && cd.files.length){
-        files.push(...filterImageFiles(cd.files));
+        Array.from(cd.files).forEach(addFile);
       }
       if(cd.items && cd.items.length){
         Array.from(cd.items).forEach(function(item){
           if(!item || item.kind !== 'file') return;
           const file = item.getAsFile ? item.getAsFile() : null;
-          if(file && looksLikeImageFile(file, item.type)){
-            files.push(file);
+          if(file){
+            const hintedType = item.type || (file && file.type) || '';
+            if(hintedType ? looksLikeImageFile(file, hintedType) : looksLikeImageFile(file)){
+              addFile(file);
+            }
           }
         });
       }
