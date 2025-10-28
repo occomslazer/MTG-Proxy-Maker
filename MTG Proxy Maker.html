@@ -102,9 +102,6 @@
 
     .cell.dragging { opacity: .6; }
 
-    .drop-hint { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(17,24,39,.08); border: 2px dashed #4b5563; border-radius: 8px; font-weight: 700; color: #374151; pointer-events: none; }
-    .page.dragover .drop-hint { display: flex; }
-
     /* Instruct printers on paper size */
     @page { size: 8.5in 11in; margin: 0; }
 
@@ -154,7 +151,6 @@
       .cell{ border: none !important; }
       .cell .placeholder{ display: none !important; }
       .cell::after{ display:none !important; }
-      .drop-hint{ display:none !important; }
       .ctx-menu { display: none !important; }
 
       img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -285,7 +281,6 @@
     :root[data-theme="dark"] button.danger { background:#b91c1c; border-color:#7f1d1d; }
     :root[data-theme="dark"] .cell { background:#0b1220; }
     :root[data-theme="dark"] .cell .placeholder { color:#94a3b8; }
-    :root[data-theme="dark"] .drop-hint { background:rgba(255,255,255,.06); border-color:#94a3b8; color:#e5e7eb; }
     :root[data-theme="dark"] .page { background:var(--page-bg); }
     :root[data-theme="dark"] .modal .sheet { background:#111827; color:#e5e7eb; border-color:#1f2937; }
     :root[data-theme="dark"] .modal .sheet h2,
@@ -1223,7 +1218,6 @@
         grid.appendChild(cell); cells.push(cell);
       }
       var overlay = document.createElement('div'); overlay.className = 'cut-overlay'; p.appendChild(overlay);
-      var dropHint = document.createElement('div'); dropHint.className='drop-hint'; dropHint.textContent='Drop images to place them into the grid'; p.appendChild(dropHint);
       p.appendChild(grid);
       pageWrap.appendChild(p);
 
