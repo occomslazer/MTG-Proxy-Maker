@@ -968,6 +968,47 @@
     function ensureHelpModal(){
       if (helpModal) return helpModal;
       const tpl = document.createElement('template');
+
+      const modKey = MOD_KEY_LABEL;
+      const hotkeyItems = [
+        '<li><b>Arrow keys</b> – Move focus between cells</li>',
+        `<li><b>${modKey}+← / ${modKey}+→</b> – Prev/Next page (<b>[</b>/<b>]</b> also works)</li>`,
+        '<li><b>Home</b> – First page (Fn+← on Mac)</li>',
+        '<li><b>End</b> – Last page (Fn+→ on Mac)</li>',
+        '<li><b>N</b> – Add page</li>',
+        '<li><b>Shift+Delete/Backspace</b> – Remove current page (confirm)</li>',
+        `<li><b>${modKey}+Delete/Backspace</b> – Clear current page</li>`,
+        `<li><b>${modKey}+Shift+Delete/Backspace</b> – Clear ALL pages</li>`,
+        '<li><b>Alt+Arrows</b> – Reorder focused cell</li>',
+        '<li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>',
+        '<li><b>Delete/Backspace</b> – Clear focused cell</li>',
+        ELECTRON_DETECTED
+          ? `<li><b>Clipboard actions</b> – Copy (${modKey}+C) and paste (${modKey}+V) cards with full desktop support, including images.</li>`
+          : '<li><b>Clipboard actions</b> – Copy/paste works in browsers that support image clipboard APIs. If your browser blocks it, <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">download the desktop app</a> for full support.</li>',
+        '<li><b>1–9</b> – Focus a cell</li>',
+        '<li><b>Enter</b> in card field – Add card</li>',
+        '<li><b>P</b> – Print all pages</li>',
+        '<li><b>G</b> – Toggle guides</li>',
+        '<li><b>M</b> – Toggle cut marks</li>',
+        '<li><b>?</b> or <b>H</b> or <b>F1</b> – Open this help</li>',
+        '<li><b>Esc</b> – Close any open dialog</li>'
+      ];
+
+      const howItWorksItems = [
+        'Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.',
+        'To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.',
+        'Double-click a cell to replace its image.',
+        ELECTRON_DETECTED
+          ? 'Clipboard paste works without extra prompts in the desktop app and supports images by default.'
+          : 'Clipboard paste works in supported browsers (you may need to grant permission). The <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> remains available if your browser doesn’t allow it.',
+        'New pages are created automatically when needed.',
+        '<b>Print</b> prints all pages exact size.'
+      ];
+
+      const clipboardFootnote = ELECTRON_DETECTED
+        ? '🖥️ Clipboard features (copy/paste, right-click actions) use the system clipboard directly in the desktop app and are always enabled.'
+        : '⚠️ Clipboard features (copy/paste, right-click actions) require a browser that supports the image clipboard APIs and may prompt for permission. If it’s unavailable, the <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> still offers full support.';
+
       tpl.innerHTML = `
         <div id="helpModal" class="modal">
           <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
@@ -977,37 +1018,14 @@
               <div>
                 <h3 style="margin:8px 0 4px;font-size:14px;">Hotkeys</h3>
                 <ul class="help-list">
-                  <li><b>Arrow keys</b> – Move focus between cells</li>
-                  <li><b>Ctrl/⌘+← / Ctrl/⌘+→</b> – Prev/Next page (<b>[</b>/<b>]</b> also works)</li>
-                  <li><b>Home</b> – First page (Fn+← on Mac)</li>
-                  <li><b>End</b> – Last page (Fn+→ on Mac)</li>
-                  <li><b>N</b> – Add page</li>
-                  <li><b>Shift+Delete/Backspace</b> – Remove current page (confirm)</li>
-                  <li><b>Ctrl/⌘+Delete/Backspace</b> – Clear current page</li>
-                  <li><b>Ctrl/⌘+Shift+Delete/Backspace</b> – Clear ALL pages</li>
-                  <li><b>Alt+Arrows</b> – Reorder focused cell</li>
-                  <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
-                  <li><b>Delete/Backspace</b> – Clear focused cell</li>
-                  <li><b>Clipboard actions</b> – Copy/paste works in browsers that support image clipboard APIs. If your browser blocks it, <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">download the desktop app</a> for full support.</li>
-                  <li><b>1–9</b> – Focus a cell</li>
-                  <li><b>Enter</b> in card field – Add card</li>
-                  <li><b>P</b> – Print all pages</li>
-                  <li><b>G</b> – Toggle guides</li>
-                  <li><b>M</b> – Toggle cut marks</li>
-                  <li><b>?</b> or <b>H</b> or <b>F1</b> – Open this help</li>
-                  <li><b>Esc</b> – Close any open dialog</li>
+                  ${hotkeyItems.join('')}
                 </ul>
               </div>
 
               <div>
                 <h3 style="margin:12px 0 4px;font-size:14px;">How it works</h3>
                 <ul class="help-list">
-                  <li>Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.</li>
-                  <li>To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.</li>
-                  <li>Double-click a cell to replace its image.</li>
-                  <li>Clipboard paste works in supported browsers (you may need to grant permission). The <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> remains available if your browser doesn’t allow it.</li>
-                  <li>New pages are created automatically when needed.</li>
-                  <li><b>Print</b> prints all pages exact size.</li>
+                  ${howItWorksItems.map(function(item){ return '<li>' + item + '</li>'; }).join('')}
                 </ul>
 
                 <h3 style="margin:12px 0 4px;">Image fit: <i>Cover</i> vs <i>Contain</i></h3>
@@ -1027,7 +1045,7 @@
             </div>
 
             <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
-            <p class="footnote">⚠️ Clipboard features (copy/paste, right-click actions) require a browser that supports the image clipboard APIs and may prompt for permission. If it’s unavailable, the <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> still offers full support.</p>
+            <p class="footnote">${clipboardFootnote}</p>
 
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
