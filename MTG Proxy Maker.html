@@ -2205,15 +2205,24 @@
       if(!files.length) return 0;
       const pageIdx = pages.indexOf(model);
       if(pageIdx === -1) return 0;
+      await imageStoreReady;
       let placed = 0;
       let pos = {page: pageIdx, index: targetIdx};
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        const m = pages[pos.page];
+        const currentPos = pos;
+        if(!currentPos) return;
+        const m = pages[currentPos.page];
         if(!m) return;
-        placeImage(m, pos.index, dataUrl);
-        placed++;
-        const next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
-        pos = next;
+        try{
+          const item = await createStoredItemFromDataUrl(dataUrl);
+          if(!item) return;
+          placeImage(m, currentPos.index, item);
+          placed++;
+          const next = nextEmptySlotFrom({page: currentPos.page, index: currentPos.index+1}) || ensurePageForAppend();
+          pos = next;
+        }catch(err){
+          console.error('Failed to store dropped image', err);
+        }
       });
       return placed;
     }
@@ -2238,22 +2247,31 @@
         if(!isValid){ preferred = null; }
       }
 
+      await imageStoreReady;
       var usingPreferredFirst = !!preferred;
       var pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
 
       let placed = 0;
       await processImageFilesInBatches(files, async (_, dataUrl) => {
         const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+        if(!target) return;
         const m = pages[target.page];
-        placeImage(m, target.index, dataUrl);
-        placed++;
+        if(!m) return;
+        try{
+          const item = await createStoredItemFromDataUrl(dataUrl);
+          if(!item) return;
+          placeImage(m, target.index, item);
+          placed++;
 
-        if(usingPreferredFirst){
-          usingPreferredFirst = false;
-          pos = nextEmptySlot(target.page) || ensurePageForAppend();
-        } else {
-          var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-          pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+          if(usingPreferredFirst){
+            usingPreferredFirst = false;
+            pos = nextEmptySlot(target.page) || ensurePageForAppend();
+          } else {
+            var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
+            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+          }
+        }catch(err){
+          console.error('Failed to store added image', err);
         }
       });
       return placed;
