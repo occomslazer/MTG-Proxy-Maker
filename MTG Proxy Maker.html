@@ -865,7 +865,7 @@
     }
 
     function createStoredItemFromKey(key, mime){
-      return { type: 'stored', key: key, mime: mime || null, resolvedSrc: null };
+      return { type: 'stored', key: key, mime: mime || null, resolvedSrc: null, previewSrc: null };
     }
 
     async function createStoredItemFromDataUrl(dataUrl){
@@ -874,7 +874,8 @@
         type: 'stored',
         key: stored.key,
         mime: stored.mime || null,
-        resolvedSrc: stored.url || null
+        resolvedSrc: stored.url || null,
+        previewSrc: dataUrl
       };
     }
 
@@ -884,7 +885,8 @@
         type: 'stored',
         key: stored.key,
         mime: stored.mime || blob.type || mimeHint || null,
-        resolvedSrc: stored.url || null
+        resolvedSrc: stored.url || null,
+        previewSrc: null
       };
     }
 
@@ -1647,10 +1649,19 @@
     async function resolveItemSrc(item){
       if (!item) return null;
       if (item.type === 'stored' && item.key){
-        if (item.resolvedSrc) return item.resolvedSrc;
+        if (item.resolvedSrc){
+          return item.resolvedSrc;
+        }
         const url = await imageStore.getUrl(item.key, item.mime || null);
-        item.resolvedSrc = url;
-        return url;
+        if (url){
+          item.resolvedSrc = url;
+          return url;
+        }
+        const fallback = item.previewSrc || null;
+        if (fallback){
+          item.resolvedSrc = fallback;
+        }
+        return fallback;
       }
       if (item.type === 'url' && item.url){
         return item.url;
@@ -1686,12 +1697,19 @@
       };
       cell.appendChild(el);
 
+      if (data.type === 'stored' && data.previewSrc){
+        el.src = data.previewSrc;
+      }
+
       Promise.resolve(resolveItemSrc(data)).then(function(src){
         if (!src){
           throw new Error('Missing image source');
         }
         if (data.__renderToken !== token) return;
         el.src = src;
+        if (data.previewSrc && data.previewSrc !== src){
+          data.previewSrc = null;
+        }
       }).catch(function(err){
         console.error('Failed to render image', err);
         if (data.__renderToken !== token) return;
