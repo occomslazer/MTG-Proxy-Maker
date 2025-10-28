@@ -1193,14 +1193,16 @@
       const pageH = parseFloat(cs.getPropertyValue('--page-h')) * px;
       const cellW = parseFloat(cs.getPropertyValue('--cell-w')) * px;
       const cellH = parseFloat(cs.getPropertyValue('--cell-h')) * px;
+      const gap = parseFloat(cs.getPropertyValue('--grid-gap')) * px || 0;
 
       const gridTopIn = parseFloat(cs.getPropertyValue('--grid-top')) || 0;
       const marginY = gridTopIn * px;
 
       /* center the grid horizontally */
-      const marginX = (pageW - (cellW * cols)) / 2;
+      const gridWidth = (cellW * cols) + (gap * Math.max(0, cols - 1));
+      const marginX = (pageW - gridWidth) / 2;
 
-      return { pageW, pageH, cellW, cellH, marginX, marginY, px };
+      return { pageW, pageH, cellW, cellH, marginX, marginY, gap, px };
     }
 
     /* ===== Model ===== */
@@ -1736,24 +1738,60 @@
         return;
       }
 
+      const renderFromCss = () => {
+        const { pageW, pageH, cellW, cellH, marginX, marginY, gap } = readCssInches();
+        if (!pageW || !pageH || !cellW || !cellH){
+          overlay.innerHTML = `<svg viewBox="0 0 1 1"></svg>`;
+          return true;
+        }
+
+        const safeMarginX = isFinite(marginX) ? marginX : 0;
+        const safeMarginY = isFinite(marginY) ? marginY : 0;
+
+        const xs = [];
+        for (let i = 0; i <= cols; i++){
+          const gapBefore = i > 0 ? (i - 1) * (gap || 0) : 0;
+          xs.push(safeMarginX + (i * cellW) + gapBefore);
+        }
+
+        const ys = [];
+        for (let j = 0; j <= rows; j++){
+          const gapBefore = j > 0 ? (j - 1) * (gap || 0) : 0;
+          ys.push(safeMarginY + (j * cellH) + gapBefore);
+        }
+
+        overlay.innerHTML =
+          `<svg viewBox="0 0 ${pageW} ${pageH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">
+             <g stroke="#9ca3af" stroke-width="1" fill="none">
+               ${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${pageH}"/>`).join('')}
+               ${ys.map(y=>`<line x1="0" y1="${y}" x2="${pageW}" y2="${y}"/>`).join('')}
+             </g>
+           </svg>`;
+        return true;
+      };
+
       // Layout dimensions (not affected by preview scaling)
       const layoutWidth = overlay.offsetWidth || overlay.clientWidth;
       const layoutHeight = overlay.offsetHeight || overlay.clientHeight;
 
       if (!layoutWidth || !layoutHeight){
-        overlay.innerHTML = `<svg viewBox="0 0 1 1"></svg>`;
+        renderFromCss();
         return;
       }
 
       // Screen-space rect (includes preview scale) for mapping ratios
       const ovb = overlay.getBoundingClientRect();
-      const scaleX = ovb.width ? layoutWidth / ovb.width : 1;
-      const scaleY = ovb.height ? layoutHeight / ovb.height : 1;
+      if (!ovb.width || !ovb.height){
+        renderFromCss();
+        return;
+      }
+      const scaleX = layoutWidth / ovb.width;
+      const scaleY = layoutHeight / ovb.height;
 
       const firstRow = model.cells.slice(0, cols);
       const firstCol = model.cells.filter((_, i) => i % cols === 0);
       if (!firstRow.length || !firstCol.length) {
-        overlay.innerHTML = `<svg viewBox="0 0 ${layoutWidth} ${layoutHeight}"></svg>`;
+        renderFromCss();
         return;
       }
 
@@ -1763,8 +1801,18 @@
       const top    = (firstCol[0].getBoundingClientRect().top   - ovb.top) * scaleY;
       const bottom = (firstCol[firstCol.length-1].getBoundingClientRect().bottom - ovb.top) * scaleY;
 
+      if (!isFinite(left) || !isFinite(right) || !isFinite(top) || !isFinite(bottom) || right <= left || bottom <= top){
+        renderFromCss();
+        return;
+      }
+
       const cw = (right - left) / cols;
       const ch = (bottom - top) / rows;
+
+      if (!isFinite(cw) || !isFinite(ch) || cw <= 0 || ch <= 0){
+        renderFromCss();
+        return;
+      }
 
       // Lines at every cell boundary, including outer edges
       const xs = [];
