@@ -1915,8 +1915,10 @@
       if(!cd) return files;
 
       const seen = new Set();
-      function addFile(file){
-        if(!file || !looksLikeImageFile(file)) return;
+      function addFile(file, hintedType){
+        if(!file) return;
+        const typeHint = typeof hintedType === 'string' && hintedType ? hintedType : undefined;
+        if(!looksLikeImageFile(file, typeHint)) return;
         const key = fileIdentityKey(file);
         if(seen.has(key)) return;
         seen.add(key);
@@ -1924,17 +1926,15 @@
       }
 
       if(cd.files && cd.files.length){
-        Array.from(cd.files).forEach(addFile);
+        Array.from(cd.files).forEach(function(file){ addFile(file); });
       }
       if(cd.items && cd.items.length){
         Array.from(cd.items).forEach(function(item){
           if(!item || item.kind !== 'file') return;
           const file = item.getAsFile ? item.getAsFile() : null;
           if(file){
-            const hintedType = item.type || (file && file.type) || '';
-            if(hintedType ? looksLikeImageFile(file, hintedType) : looksLikeImageFile(file)){
-              addFile(file);
-            }
+            const hintedType = item.type || (file && file.type) || undefined;
+            addFile(file, hintedType);
           }
         });
       }
