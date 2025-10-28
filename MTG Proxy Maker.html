@@ -985,6 +985,15 @@
       const tpl = document.createElement('template');
 
       const modKey = MOD_KEY_LABEL;
+      const clipboardHotkeys = (clipboardCanWriteImage() || clipboardCanReadImage())
+        ? [
+            `<li><b>${modKey}+C</b> – Copy selected cell</li>`,
+            `<li><b>${modKey}+V</b> – Paste into focused cell</li>`
+          ]
+        : [
+            '<li><b>Clipboard actions</b> – Copy/paste works in browsers that support image clipboard APIs. If your browser blocks it, <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">download the desktop app</a> for full support.</li>'
+          ];
+
       const hotkeyItems = [
         '<li><b>Arrow keys</b> – Move focus between cells</li>',
         `<li><b>${modKey}+← / ${modKey}+→</b> – Prev/Next page (<b>[</b>/<b>]</b> also works)</li>`,
@@ -997,12 +1006,7 @@
         '<li><b>Alt+Arrows</b> – Reorder focused cell</li>',
         '<li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>',
         '<li><b>Delete/Backspace</b> – Clear focused cell</li>',
-        ELECTRON_DETECTED
-          ? [
-              `<li><b>${modKey}+C</b> – Copy selected cell</li>`,
-              `<li><b>${modKey}+V</b> – Paste into focused cell</li>`
-            ].join('')
-          : '<li><b>Clipboard actions</b> – Copy/paste works in browsers that support image clipboard APIs. If your browser blocks it, <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">download the desktop app</a> for full support.</li>',
+        clipboardHotkeys.join(''),
         '<li><b>1–9</b> – Focus a cell</li>',
         '<li><b>Enter</b> in card field – Add card</li>',
         '<li><b>P</b> – Print all pages</li>',
@@ -2075,7 +2079,11 @@
         return true;
       }catch(err){
         console.error('Failed to copy image', err);
-        setStatus("Copying isn't supported in the Browser version. Please use the Desktop version.");
+        if (ELECTRON_DETECTED){
+          setStatus('Failed to copy image');
+        } else {
+          setStatus("Copying isn't supported in the Browser version. Please use the Desktop version.");
+        }
         return false;
       }
     }
