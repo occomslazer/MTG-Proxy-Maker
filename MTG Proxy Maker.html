@@ -1907,15 +1907,7 @@
       const size = typeof file.size === 'number' ? file.size : 0;
       const type = typeof file.type === 'string' ? file.type : '';
       const lastModified = typeof file.lastModified === 'number' ? file.lastModified : 0;
-      // Clipboard-provided File objects sometimes report unique lastModified
-      // timestamps for each representation (DataTransfer.files vs.
-      // DataTransferItem.getAsFile), even when they wrap the same binary
-      // payload. That causes duplicates when we build the identity key from
-      // the full metadata tuple. Use the timestamp only when it contributes
-      // additional information beyond name/size/type.
-      const parts = [name, size, type];
-      if(lastModified && (name || type)){ parts.push(lastModified); }
-      return parts.join('::');
+      return [name, size, type, lastModified].join('::');
     }
 
     function collectImageFilesFromClipboardData(cd){
