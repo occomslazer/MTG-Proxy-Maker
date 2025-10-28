@@ -1920,41 +1920,46 @@
 
     function fileIdentityKey(file){
       if(!file) return '';
-      const name = typeof file.name === 'string' ? file.name : '';
-      const size = typeof file.size === 'number' ? file.size : 0;
+      const size = (typeof file.size === 'number' && isFinite(file.size)) ? file.size : -1;
       const type = typeof file.type === 'string' ? file.type : '';
-      const lastModified = typeof file.lastModified === 'number' ? file.lastModified : 0;
-      return [name, size, type, lastModified].join('::');
+      const lastModified = (typeof file.lastModified === 'number' && isFinite(file.lastModified)) ? file.lastModified : -1;
+      return [size, type, lastModified].join('::');
     }
 
     function collectImageFilesFromClipboardData(cd){
       const files = [];
-      if(!cd) return files;
+      if(!cd){
+        console.log('Unique images detected on paste:', files.length);
+        return files;
+      }
 
       const seen = new Set();
-      function addFile(file){
-        if(!file || !looksLikeImageFile(file)) return;
+      function addFile(file, typeHint){
+        if(!file || !looksLikeImageFile(file, typeHint)) return false;
         const key = fileIdentityKey(file);
-        if(seen.has(key)) return;
+        if(seen.has(key)) return false;
         seen.add(key);
         files.push(file);
+        return true;
+      }
+
+      if(cd.items && cd.items.length){
+        Array.from(cd.items).forEach(function(item){
+          if(!item || item.kind !== 'file' || typeof item.getAsFile !== 'function') return;
+          const file = item.getAsFile();
+          if(!file) return;
+          const hint = item.type || file.type || '';
+          addFile(file, hint);
+        });
       }
 
       if(cd.files && cd.files.length){
-        Array.from(cd.files).forEach(addFile);
-      }
-      if(cd.items && cd.items.length){
-        Array.from(cd.items).forEach(function(item){
-          if(!item || item.kind !== 'file') return;
-          const file = item.getAsFile ? item.getAsFile() : null;
-          if(file){
-            const hintedType = item.type || (file && file.type) || '';
-            if(hintedType ? looksLikeImageFile(file, hintedType) : looksLikeImageFile(file)){
-              addFile(file);
-            }
-          }
+        Array.from(cd.files).forEach(function(file){
+          addFile(file);
         });
       }
+
+      console.log('Unique images detected on paste:', files.length);
       return files;
     }
 
