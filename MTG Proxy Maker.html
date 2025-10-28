@@ -500,15 +500,6 @@
       }
     }
 
-    function readFileAsDataURL(file){
-      return new Promise(function(resolve, reject){
-        const reader = new FileReader();
-        reader.onerror = function(){ reject(reader.error || new Error('Failed to read file')); };
-        reader.onload = function(){ resolve(reader.result); };
-        reader.readAsDataURL(file);
-      });
-    }
-
     function waitForImageLoad(src){
       return new Promise(function(resolve, reject){
         const img = new Image();
