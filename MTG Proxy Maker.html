@@ -2065,7 +2065,7 @@
         return true;
       }catch(err){
         console.error('Failed to copy image', err);
-        setStatus('Failed to copy image: ' + (err && err.message ? err.message : err));
+        setStatus("Copying isn't supported in the Browser version. Please use the Desktop version.");
         return false;
       }
     }
