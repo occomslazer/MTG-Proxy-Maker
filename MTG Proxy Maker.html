@@ -1732,27 +1732,36 @@
     function renderCutOverlay(model){
       const overlay = model.cutOverlayEl;
 
-      // Measure overlay box (page) and cells
-      const ovb = overlay.getBoundingClientRect();
-      const W = ovb.width, H = ovb.height;
+      if (!overlay){
+        return;
+      }
 
-      if (!W || !H){
+      // Layout dimensions (not affected by preview scaling)
+      const layoutWidth = overlay.offsetWidth || overlay.clientWidth;
+      const layoutHeight = overlay.offsetHeight || overlay.clientHeight;
+
+      if (!layoutWidth || !layoutHeight){
         overlay.innerHTML = `<svg viewBox="0 0 1 1"></svg>`;
         return;
       }
 
+      // Screen-space rect (includes preview scale) for mapping ratios
+      const ovb = overlay.getBoundingClientRect();
+      const scaleX = ovb.width ? layoutWidth / ovb.width : 1;
+      const scaleY = ovb.height ? layoutHeight / ovb.height : 1;
+
       const firstRow = model.cells.slice(0, cols);
       const firstCol = model.cells.filter((_, i) => i % cols === 0);
       if (!firstRow.length || !firstCol.length) {
-        overlay.innerHTML = `<svg viewBox="0 0 ${W} ${H}"></svg>`;
+        overlay.innerHTML = `<svg viewBox="0 0 ${layoutWidth} ${layoutHeight}"></svg>`;
         return;
       }
 
-      // Grid bounds (relative to overlay)
-      const left   = firstRow[0].getBoundingClientRect().left  - ovb.left;
-      const right  = firstRow[firstRow.length-1].getBoundingClientRect().right - ovb.left;
-      const top    = firstCol[0].getBoundingClientRect().top   - ovb.top;
-      const bottom = firstCol[firstCol.length-1].getBoundingClientRect().bottom - ovb.top;
+      // Grid bounds (relative to overlay, mapped back to layout units)
+      const left   = (firstRow[0].getBoundingClientRect().left  - ovb.left) * scaleX;
+      const right  = (firstRow[firstRow.length-1].getBoundingClientRect().right - ovb.left) * scaleX;
+      const top    = (firstCol[0].getBoundingClientRect().top   - ovb.top) * scaleY;
+      const bottom = (firstCol[firstCol.length-1].getBoundingClientRect().bottom - ovb.top) * scaleY;
 
       const cw = (right - left) / cols;
       const ch = (bottom - top) / rows;
@@ -1764,10 +1773,10 @@
       for (let j = 0; j <= rows; j++) ys.push(top + j * ch);
 
       overlay.innerHTML =
-        `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">
+        `<svg viewBox="0 0 ${layoutWidth} ${layoutHeight}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">
            <g stroke="#9ca3af" stroke-width="1" fill="none">
-             ${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${H}"/>`).join('')}
-             ${ys.map(y=>`<line x1="0" y1="${y}" x2="${W}" y2="${y}"/>`).join('')}
+             ${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${layoutHeight}"/>`).join('')}
+             ${ys.map(y=>`<line x1="0" y1="${y}" x2="${layoutWidth}" y2="${y}"/>`).join('')}
            </g>
          </svg>`;
     }
