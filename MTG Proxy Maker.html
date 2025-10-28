@@ -102,9 +102,6 @@
 
     .cell.dragging { opacity: .6; }
 
-    .drop-hint { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(17,24,39,.08); border: 2px dashed #4b5563; border-radius: 8px; font-weight: 700; color: #374151; pointer-events: none; }
-    .page.dragover .drop-hint { display: flex; }
-
     /* Instruct printers on paper size */
     @page { size: 8.5in 11in; margin: 0; }
 
@@ -154,7 +151,6 @@
       .cell{ border: none !important; }
       .cell .placeholder{ display: none !important; }
       .cell::after{ display:none !important; }
-      .drop-hint{ display:none !important; }
       .ctx-menu { display: none !important; }
 
       img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -285,7 +281,6 @@
     :root[data-theme="dark"] button.danger { background:#b91c1c; border-color:#7f1d1d; }
     :root[data-theme="dark"] .cell { background:#0b1220; }
     :root[data-theme="dark"] .cell .placeholder { color:#94a3b8; }
-    :root[data-theme="dark"] .drop-hint { background:rgba(255,255,255,.06); border-color:#94a3b8; color:#e5e7eb; }
     :root[data-theme="dark"] .page { background:var(--page-bg); }
     :root[data-theme="dark"] .modal .sheet { background:#111827; color:#e5e7eb; border-color:#1f2937; }
     :root[data-theme="dark"] .modal .sheet h2,
@@ -461,8 +456,31 @@
     const ELECTRON_DETECTED = typeof window !== 'undefined'
       && !!(window.process && window.process.versions && window.process.versions.electron);
 
+    const IS_MAC = typeof navigator !== 'undefined'
+      && /Mac|iPhone|iPad|iPod/.test((navigator.platform || navigator.userAgent || '').toString());
+    const MOD_KEY_LABEL = IS_MAC ? '⌘' : 'Ctrl';
+
     function isDataUrl(value){
       return typeof value === 'string' && /^data:/i.test(value);
+    }
+
+    const IMAGE_EXTENSION_RE = /\.(?:avif|bmp|gif|heic|heif|jfif|jpe?g|png|svg|tif?f|webp)$/i;
+
+    function looksLikeImageFile(file, typeHint){
+      if (!file) return false;
+      const type = (typeHint || file.type || '').toLowerCase();
+      if (type.startsWith('image/')) return true;
+      const name = (file.name || '').toLowerCase();
+      return !!(name && IMAGE_EXTENSION_RE.test(name));
+    }
+
+    function filterImageFiles(list, typeHints){
+      const files = Array.from(list || []);
+      if (!files.length) return files;
+      return files.filter(function(file, idx){
+        const hint = Array.isArray(typeHints) ? typeHints[idx] : null;
+        return looksLikeImageFile(file, hint);
+      });
     }
 
     function dataUrlToBlob(dataUrl){
@@ -977,7 +995,6 @@
                   <li><b>Alt+Arrows</b> – Reorder focused cell</li>
                   <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
                   <li><b>Delete/Backspace</b> – Clear focused cell</li>
-                  <li><b>Clipboard actions</b> – Copy/paste isn’t available in the browser. <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">Download the desktop app</a> for full support.</li>
                   <li><b>1–9</b> – Focus a cell</li>
                   <li><b>Enter</b> in card field – Add card</li>
                   <li><b>P</b> – Print all pages</li>
@@ -994,7 +1011,6 @@
                   <li>Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.</li>
                   <li>To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.</li>
                   <li>Double-click a cell to replace its image.</li>
-                  <li>Clipboard paste is a desktop-only feature—grab the <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> to auto-fill cells from screenshots or copied images.</li>
                   <li>New pages are created automatically when needed.</li>
                   <li><b>Print</b> prints all pages exact size.</li>
                 </ul>
@@ -1016,7 +1032,6 @@
             </div>
 
             <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
-            <p class="footnote">⚠️ Clipboard features (copy/paste, right-click actions) require the desktop release. <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">Download the desktop app</a> for full support.</p>
 
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
@@ -1200,7 +1215,6 @@
         grid.appendChild(cell); cells.push(cell);
       }
       var overlay = document.createElement('div'); overlay.className = 'cut-overlay'; p.appendChild(overlay);
-      var dropHint = document.createElement('div'); dropHint.className='drop-hint'; dropHint.textContent='Drop images to place them into the grid'; p.appendChild(dropHint);
       p.appendChild(grid);
       pageWrap.appendChild(p);
 
@@ -1250,6 +1264,55 @@
       refreshCutOverlays();
     });
     window.addEventListener('pageshow', () => { FORCE_PRINT_MATH = false; refreshCutOverlays(); doUpdate(); });
+
+    function dataTransferHasImage(dt){
+      if (!dt) return false;
+      const types = dt.types ? Array.from(dt.types) : [];
+      if (types.includes('Files')) return true;
+      if (types.includes('text/uri-list')) return true;
+      if (dt.files && filterImageFiles(dt.files).length) return true;
+      if (dt.items && dt.items.length){
+        return Array.from(dt.items).some(function(item){
+          if (!item) return false;
+          if (item.kind === 'file'){ return looksLikeImageFile(item.getAsFile && item.getAsFile(), item.type); }
+          if (item.kind === 'string' && item.type === 'text/uri-list') return true;
+          return false;
+        });
+      }
+      return false;
+    }
+
+    function parseUriList(text){
+      if (typeof text !== 'string') return [];
+      return text.split(/\r?\n/).map(function(line){ return line.trim(); }).filter(function(line){
+        return line && !line.startsWith('#');
+      });
+    }
+
+    function isProbablyImageUrl(value){
+      if (typeof value !== 'string') return false;
+      const trimmed = value.trim();
+      if (!trimmed) return false;
+      if (/^data:image\//i.test(trimmed)) return true;
+      if (/^(https?|blob|file):/i.test(trimmed)){ return IMAGE_EXTENSION_RE.test(trimmed.split(/[?#]/)[0] || ''); }
+      return false;
+    }
+
+    function extractUrlsFromDataTransfer(dt){
+      const urls = [];
+      if (!dt || typeof dt.getData !== 'function') return urls;
+      const uriList = dt.getData('text/uri-list');
+      if (uriList){
+        urls.push(...parseUriList(uriList));
+      }
+      if (!urls.length){
+        const plain = dt.getData('text/plain');
+        if (isProbablyImageUrl(plain)){
+          urls.push(plain.trim());
+        }
+      }
+      return urls.filter(isProbablyImageUrl);
+    }
 
     /* ===== Internal drag via PointerEvents ===== */
     let activeDrag = null;   // {srcModel, srcIdx, ghost, lastHover}
@@ -1448,25 +1511,47 @@
 
         cell.addEventListener('dragover', (e) => {
           const dt = e.dataTransfer;
-          const isFiles = dt && dt.types && Array.from(dt.types).includes('Files');
-          if (!isFiles) return;
+          if (!dataTransferHasImage(dt)) return;
           e.preventDefault();
           e.stopPropagation();
           cell.classList.add('drop-target');
-          dt.dropEffect = 'copy';
+          if (dt) dt.dropEffect = 'copy';
         });
         cell.addEventListener('dragleave', (e) => {
           e.stopPropagation();
           cell.classList.remove('drop-target');
         });
-        cell.addEventListener('drop', (e) => {
+        cell.addEventListener('drop', async (e) => {
           const dt = e.dataTransfer;
-          const hasFiles = dt && dt.files && dt.files.length;
-          if (!hasFiles) return;
+          if (!dataTransferHasImage(dt)) return;
           e.preventDefault();
           e.stopPropagation();
-          handleFilesIntoCell(model, idx, dt.files);
           cell.classList.remove('drop-target');
+          const pageIdx = pages.indexOf(model);
+          try{
+            let placed = 0;
+            const files = dt ? filterImageFiles(dt.files) : [];
+            if (files.length){
+              placed = await handleFilesIntoCell(model, idx, files);
+            } else {
+              const urls = extractUrlsFromDataTransfer(dt);
+              if (urls.length){
+                placed = await handleImageUrls(urls, {
+                  preferredSlot: pageIdx === -1 ? null : { page: pageIdx, index: idx },
+                  startPage: pageIdx,
+                  allowOverwrite: true
+                });
+              }
+            }
+            if (placed > 0){
+              setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
+            } else {
+              setStatus('No images found in dropped data');
+            }
+          }catch(err){
+            console.error('Failed to handle dropped images', err);
+            setStatus('Failed to add dropped images');
+          }
         });
 
         cell.addEventListener('dblclick', function(){
@@ -1478,24 +1563,43 @@
       ['dragenter','dragover'].forEach(function(evt){
         model.gridEl.addEventListener(evt, function(e){
           const dt = e.dataTransfer;
-          const isFiles = dt && dt.types && Array.from(dt.types).includes('Files');
-          if (!isFiles) return;
+          if (!dataTransferHasImage(dt)) return;
           const p=model.pageEl;
           p.classList.add('dragover');
           e.preventDefault();
           e.stopPropagation();
+          if (dt) dt.dropEffect = 'copy';
         });
       });
       ['dragleave','drop'].forEach(function(evt){
-        model.gridEl.addEventListener(evt, function(e){
+        model.gridEl.addEventListener(evt, async function(e){
           const dt = e.dataTransfer;
-          const isFiles = dt && dt.files && dt.files.length > 0;
-          if (!isFiles) return;
+          if (!dataTransferHasImage(dt)) return;
           const p=model.pageEl;
           if(evt==='drop'){
             e.preventDefault();
             e.stopPropagation();
-            handleFiles(dt.files);
+            const pageIdx = pages.indexOf(model);
+            try{
+              const files = dt ? filterImageFiles(dt.files) : [];
+              let placed = 0;
+              if (files.length){
+                placed = await handleFiles(files, { startPage: pageIdx });
+              } else {
+                const urls = extractUrlsFromDataTransfer(dt);
+                if (urls.length){
+                  placed = await handleImageUrls(urls, { startPage: pageIdx });
+                }
+              }
+              if (placed > 0){
+                setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
+              } else {
+                setStatus('No images found in dropped data');
+              }
+            }catch(err){
+              console.error('Failed to add dropped images', err);
+              setStatus('Failed to add dropped images');
+            }
           } else {
             e.preventDefault();
             e.stopPropagation();
@@ -1681,42 +1785,98 @@
     }
 
     fileInput.addEventListener('change', function(e){
-      var selected = Array.from(e.target.files||[]).filter(f=>f.type.indexOf('image/')===0);
-      if(targetIndexForFile && selected.length){
-        assignFileToIndex(selected[0], targetIndexForFile.page, targetIndexForFile.index);
-        targetIndexForFile=null;
-      } else {
-        handleFiles(selected);
+      const selected = filterImageFiles(e.target.files || []);
+      const totalSelected = (e.target.files && e.target.files.length) || 0;
+      const reset = () => { fileInput.value=''; };
+
+      if(targetIndexForFile){
+        const target = targetIndexForFile;
+        targetIndexForFile = null;
+        if(selected.length){
+          assignFileToIndex(selected[0], target.page, target.index)
+            .then(function(count){
+              setStatus(count ? 'Replaced image' : 'No image replaced');
+            })
+            .catch(function(err){
+              console.error('Failed to replace image', err);
+              setStatus('Failed to replace image');
+            })
+            .finally(reset);
+        } else {
+          setStatus(totalSelected ? 'Selected file was not an image' : 'No image selected');
+          reset();
+        }
+        return;
       }
-      fileInput.value='';
+
+      if(!selected.length){
+        if(totalSelected){ setStatus('Selected files were not images'); }
+        reset();
+        return;
+      }
+
+      handleFiles(selected)
+        .then(function(count){
+          if(count){
+            setStatus(count === 1 ? 'Added 1 image' : `Added ${count} images`);
+          } else {
+            setStatus('No images added');
+          }
+        })
+        .catch(function(err){
+          console.error('Failed to add images', err);
+          setStatus('Failed to add images');
+        })
+        .finally(reset);
     });
 
     ['dragenter','dragover'].forEach(function(evt){
       pageWrap.addEventListener(evt, function(e){
         const dt = e.dataTransfer;
-        const isFiles = dt && dt.types && Array.from(dt.types).includes('Files');
-        if (!isFiles) return;
-        const p=getCurrent().pageEl;
-        p.classList.add('dragover');
+        if (!dataTransferHasImage(dt)) return;
+        const current = getCurrent();
+        if (!current || !current.pageEl) return;
+        current.pageEl.classList.add('dragover');
         e.preventDefault();
         e.stopPropagation();
+        if (dt) dt.dropEffect = 'copy';
       });
     });
     ['dragleave','drop'].forEach(function(evt){
-      pageWrap.addEventListener(evt, function(e){
+      pageWrap.addEventListener(evt, async function(e){
         const dt = e.dataTransfer;
-        const isFiles = dt && dt.files && dt.files.length > 0;
-        if (!isFiles) return;
-        const p=getCurrent().pageEl;
+        if (!dataTransferHasImage(dt)) return;
+        const current = getCurrent();
+        if (!current || !current.pageEl) return;
+        const pageIdx = pages.indexOf(current);
         if(evt==='drop'){
           e.preventDefault();
           e.stopPropagation();
-          handleFiles(dt.files);
+          try{
+            const files = dt ? filterImageFiles(dt.files) : [];
+            let placed = 0;
+            if (files.length){
+              placed = await handleFiles(files, { startPage: pageIdx });
+            } else {
+              const urls = extractUrlsFromDataTransfer(dt);
+              if (urls.length){
+                placed = await handleImageUrls(urls, { startPage: pageIdx });
+              }
+            }
+            if (placed > 0){
+              setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
+            } else {
+              setStatus('No images found in dropped data');
+            }
+          }catch(err){
+            console.error('Failed to add dropped images', err);
+            setStatus('Failed to add dropped images');
+          }
         } else {
           e.preventDefault();
           e.stopPropagation();
         }
-        p.classList.remove('dragover');
+        current.pageEl.classList.remove('dragover');
       });
     });
 
@@ -1724,39 +1884,110 @@
       const files = [];
       if(!cd) return files;
       if(cd.files && cd.files.length){
-        Array.from(cd.files).forEach(function(file){
-          if(file && file.type && file.type.indexOf('image/') === 0){ files.push(file); }
-        });
-      } else if(cd.items && cd.items.length){
+        files.push(...filterImageFiles(cd.files));
+      }
+      if(cd.items && cd.items.length){
         Array.from(cd.items).forEach(function(item){
           if(!item || item.kind !== 'file') return;
-          const file = item.getAsFile();
-          if(file && file.type && file.type.indexOf('image/') === 0){ files.push(file); }
+          const file = item.getAsFile ? item.getAsFile() : null;
+          if(file && looksLikeImageFile(file, item.type)){
+            files.push(file);
+          }
         });
       }
       return files;
     }
 
-    const CLIPBOARD_UNAVAILABLE_MSG = 'Clipboard features require the desktop app';
+    const CLIPBOARD_UNAVAILABLE_MSG = 'Clipboard image actions are not supported in this browser';
 
     function clipboardCanWriteImage(){
-      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
-      return false;
+      return typeof navigator !== 'undefined'
+        && navigator.clipboard
+        && typeof navigator.clipboard.write === 'function'
+        && typeof ClipboardItem !== 'undefined';
     }
 
     function clipboardCanReadImage(){
-      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
-      return false;
+      return typeof navigator !== 'undefined'
+        && navigator.clipboard
+        && typeof navigator.clipboard.read === 'function';
     }
 
     async function copyCellImage(model, index){
-      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
-      return false;
+      const item = model && model.items ? model.items[index] : null;
+      if(!item){
+        setStatus('Cell is empty');
+        return false;
+      }
+      if(!clipboardCanWriteImage()){
+        setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+        return false;
+      }
+      try{
+        let blob = null;
+        if (item.type === 'stored' && item.key){
+          blob = await imageStore.getBlob(item.key, item.mime || null);
+        } else {
+          const src = await resolveItemSrc(item);
+          if (!src){
+            setStatus('Unable to resolve image source');
+            return false;
+          }
+          if (isDataUrl(src)){
+            const dataBlob = dataUrlToBlob(src);
+            if (!dataBlob){
+              setStatus('Unable to access image data');
+              return false;
+            }
+            blob = dataBlob;
+          } else {
+            const response = await fetch(src, { mode: 'cors' }).catch(function(err){ throw err; });
+            if (!response || !response.ok){
+              throw new Error('Unable to fetch image data');
+            }
+            blob = await response.blob();
+          }
+        }
+        if(!blob){
+          setStatus('Unable to access image data');
+          return false;
+        }
+        const mime = blob.type && blob.type.startsWith('image/') ? blob.type : (item.mime || 'image/png');
+        const clipItem = new ClipboardItem({ [mime]: blob });
+        await navigator.clipboard.write([clipItem]);
+        setStatus('Copied image to clipboard');
+        return true;
+      }catch(err){
+        console.error('Failed to copy image', err);
+        setStatus('Failed to copy image: ' + (err && err.message ? err.message : err));
+        return false;
+      }
     }
 
     async function readClipboardImageFiles(){
-      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
-      return [];
+      if(!clipboardCanReadImage()) return [];
+      const results = [];
+      const items = await navigator.clipboard.read();
+      for (const item of items){
+        if(!item || !item.types) continue;
+        const type = item.types.find(function(t){ return /^image\//i.test(t); });
+        if(!type) continue;
+        try{
+          const blob = await item.getType(type);
+          const mime = (blob && blob.type) ? blob.type : type;
+          if(typeof File === 'function'){
+            const ext = (mime && mime.split('/')[1]) ? mime.split('/')[1].split('+')[0] : 'png';
+            const name = `clipboard-${Date.now()}-${results.length}.${ext}`;
+            results.push(new File([blob], name, { type: mime }));
+          } else {
+            blob.name = blob.name || `clipboard-${results.length}`;
+            results.push(blob);
+          }
+        }catch(err){
+          console.error('Failed to read clipboard image item', err);
+        }
+      }
+      return results;
     }
 
     function preferredSlotForPage(pageIdx){
@@ -1768,15 +1999,103 @@
     }
 
     async function pasteImageFromClipboard(target){
-      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
-      return false;
+      if(!clipboardCanReadImage()){
+        setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+        return false;
+      }
+      try{
+        const files = await readClipboardImageFiles();
+        if(!files.length){
+          setStatus('Clipboard does not contain image data');
+          return false;
+        }
+        let placed = 0;
+        if(target && target.model && typeof target.index === 'number'){
+          placed = await handleFilesIntoCell(target.model, target.index, files);
+        } else if(target && typeof target.pageIndex === 'number'){
+          const preferred = preferredSlotForPage(target.pageIndex);
+          placed = await handleFiles(files, {
+            startPage: target.pageIndex,
+            preferredSlot: preferred,
+            allowOverwrite: !!target.allowOverwrite
+          });
+        } else {
+          placed = await handleFiles(files);
+        }
+        if(placed > 0){
+          setStatus(placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`);
+          return true;
+        }
+        setStatus('Clipboard does not contain image data');
+        return false;
+      }catch(err){
+        console.error('Failed to paste image', err);
+        setStatus('Failed to paste image: ' + (err && err.message ? err.message : err));
+        return false;
+      }
     }
 
-    document.addEventListener('paste', function(e){
+    document.addEventListener('paste', async function(e){
       const active = document.activeElement;
       if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
-      setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      const clipboardData = e.clipboardData || window.clipboardData || null;
+      const focusedCell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
+      const resolved = focusedCell ? resolveModelFromCellEl(focusedCell) : null;
+      const resolvedPageIdx = resolved ? pages.indexOf(resolved.model) : -1;
+
+      if(clipboardData){
+        const files = collectImageFilesFromClipboardData(clipboardData);
+        if(files.length){
+          e.preventDefault();
+          let placed = 0;
+          if(resolved && resolved.model){
+            placed = await handleFilesIntoCell(resolved.model, resolved.index, files);
+          } else {
+            placed = await handleFiles(files);
+          }
+          setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
+          return;
+        }
+
+        let urls = clipboardData.getData ? parseUriList(clipboardData.getData('text/uri-list')) : [];
+        if(!urls.length && clipboardData.getData){
+          const plain = clipboardData.getData('text/plain');
+          if(isProbablyImageUrl(plain)){
+            urls = [plain.trim()];
+          }
+        }
+        if(urls.length){
+          e.preventDefault();
+          let placed = 0;
+          if(resolved && resolved.model){
+            placed = await handleImageUrls(urls, {
+              preferredSlot: resolvedPageIdx === -1 ? null : { page: resolvedPageIdx, index: resolved.index },
+              startPage: resolvedPageIdx,
+              allowOverwrite: true
+            });
+          } else {
+            placed = await handleImageUrls(urls, { startPage: currentPage });
+          }
+          setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
+          return;
+        }
+      }
+
+      if(clipboardCanReadImage()){
+        e.preventDefault();
+        const target = resolved && resolved.model
+          ? { model: resolved.model, index: resolved.index, pageIndex: resolvedPageIdx, allowOverwrite: true }
+          : { pageIndex: currentPage };
+        await pasteImageFromClipboard(target);
+        return;
+      }
+
+      if(clipboardData){
+        setStatus('Clipboard does not contain image data');
+      } else {
+        setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      }
     });
 
     const IMAGE_FILE_BATCH_SIZE = 16;
@@ -1833,13 +2152,10 @@
     }
 
     async function assignFileToIndex(file, pageIdx, cellIdx){
-      if(!file || !file.type || file.type.indexOf('image/') !== 0) return;
-      await processImageFilesInBatches([file], async (_, dataUrl) => {
-        const model = pages[pageIdx];
-        if(model){
-          placeImage(model, cellIdx, dataUrl);
-        }
-      });
+      if(!looksLikeImageFile(file)) return 0;
+      const model = pages[pageIdx];
+      if(!model) return 0;
+      return handleFilesIntoCell(model, cellIdx, [file]);
     }
 
     function nextEmptySlot(startPage){ if(startPage==null) startPage=0; for(var p=startPage;p<pages.length;p++){ var model=pages[p]; var idx=model.items.findIndex(x=>x==null); if(idx!==-1) return {page:p, index: idx}; } return null; }
@@ -1864,23 +2180,32 @@
     }
 
     async function handleFilesIntoCell(model, targetIdx, fileList){
-      var files = Array.from(fileList||[]).filter(f=>f.type && f.type.indexOf('image/')===0);
-      if(files.length===0) return;
-      var pageIdx = pages.indexOf(model);
-      if(pageIdx === -1) return;
-      var pos = {page: pageIdx, index: targetIdx};
+      const files = filterImageFiles(fileList);
+      if(!files.length) return 0;
+      const pageIdx = pages.indexOf(model);
+      if(pageIdx === -1) return 0;
+      let placed = 0;
+      let pos = {page: pageIdx, index: targetIdx};
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        var m = pages[pos.page];
-        if(!m) return;
-        placeImage(m, pos.index, dataUrl);
-        var next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
-        pos = next;
+        try{
+          const item = await createStoredItemFromDataUrl(dataUrl);
+          if(!item) return;
+          const m = pages[pos.page];
+          if(!m) return;
+          placeImage(m, pos.index, item);
+          placed++;
+          const next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
+          pos = next;
+        }catch(err){
+          console.error('Failed to store dropped image', err);
+        }
       });
+      return placed;
     }
 
     async function handleFiles(fileList, opts){
-      var files = Array.from(fileList||[]).filter(f=>f.type && f.type.indexOf('image/')===0);
-      if(files.length===0) return;
+      const files = filterImageFiles(fileList);
+      if(!files.length) return 0;
 
       var preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
       const allowOverwrite = !!(opts && opts.allowOverwrite);
@@ -1901,19 +2226,81 @@
       var usingPreferredFirst = !!preferred;
       var pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
 
+      let placed = 0;
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        var target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
-        var m = pages[target.page];
-        placeImage(m, target.index, dataUrl);
+        try{
+          const item = await createStoredItemFromDataUrl(dataUrl);
+          if(!item) return;
+          const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+          const m = pages[target.page];
+          if(!m) return;
+          placeImage(m, target.index, item);
+          placed++;
 
-        if(usingPreferredFirst){
-          usingPreferredFirst = false;
-          pos = nextEmptySlot(target.page) || ensurePageForAppend();
-        } else {
-          var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-          pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+          if(usingPreferredFirst){
+            usingPreferredFirst = false;
+            pos = nextEmptySlot(target.page) || ensurePageForAppend();
+          } else {
+            var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
+            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+          }
+        }catch(err){
+          console.error('Failed to store image file', err);
         }
       });
+      return placed;
+    }
+
+    async function handleImageUrls(urlList, opts){
+      const urls = Array.from(urlList || []).map(function(u){
+        return typeof u === 'string' ? u.trim() : '';
+      }).filter(isProbablyImageUrl);
+      if(!urls.length) return 0;
+
+      let startPage = (opts && typeof opts.startPage === 'number') ? opts.startPage : currentPage;
+      if(!pages.length){
+        startPage = 0;
+      } else {
+        if(startPage < 0) startPage = 0;
+        if(startPage >= pages.length) startPage = pages.length - 1;
+      }
+
+      let preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
+      const allowOverwrite = !!(opts && opts.allowOverwrite);
+      if(preferred){
+        const hasModel = pages[preferred.page] && pages[preferred.page].items;
+        const isValid = hasModel && (pages[preferred.page].items[preferred.index] == null || allowOverwrite);
+        if(!isValid){ preferred = null; }
+      }
+
+      let usingPreferredFirst = !!preferred;
+      let pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
+      let placed = 0;
+
+      for (const src of urls){
+        if(!src) continue;
+        try{
+          const item = await createItemFromSrc(src);
+          if(!item) continue;
+          const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+          const m = pages[target.page];
+          if(!m) continue;
+          placeImage(m, target.index, item);
+          placed++;
+
+          if(usingPreferredFirst){
+            usingPreferredFirst = false;
+            pos = nextEmptySlot(target.page) || ensurePageForAppend();
+          } else {
+            const startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
+            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+          }
+        }catch(err){
+          console.error('Failed to handle image URL', err);
+        }
+      }
+
+      return placed;
     }
 
     /* ===== Pager & Clear helpers ===== */
@@ -2063,9 +2450,9 @@
         const cell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
         if(cell){
           const resolved = resolveModelFromCellEl(cell);
-          if(resolved && resolved.model && resolved.model.items && resolved.model.items[resolved.index]){
+          if(resolved && resolved.model){
             e.preventDefault();
-            setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+            copyCellImage(resolved.model, resolved.index);
             return;
           }
         }
@@ -2851,7 +3238,18 @@
       }
 
       const clipboardSection = ctxSection('Clipboard');
-      clipboardSection.appendChild(ctxItem('Clipboard actions are disabled in the browser—use the desktop app for copy/paste support.', null, { disabled: true }));
+      const canCopy = clipboardCanWriteImage();
+      const canPaste = clipboardCanReadImage();
+      if (hasImage){
+        clipboardSection.appendChild(ctxItem('Copy image', function(){ copyCellImage(model, index); }, { disabled: !canCopy, kbd: MOD_KEY_LABEL + '+C' }));
+      }
+      clipboardSection.appendChild(ctxItem('Paste image', function(){
+        const pageIdx = pages.indexOf(model);
+        pasteImageFromClipboard({ model: model, index: index, pageIndex: pageIdx >= 0 ? pageIdx : currentPage, allowOverwrite: true });
+      }, { disabled: !canPaste, kbd: MOD_KEY_LABEL + '+V' }));
+      if(!canCopy && !canPaste){
+        clipboardSection.appendChild(ctxItem(CLIPBOARD_UNAVAILABLE_MSG, null, { disabled: true }));
+      }
 
       if (clipboardSection.querySelectorAll('.ctx-item').length){
         if (rootEl.childElementCount){ rootEl.appendChild(ctxSeparator()); }
@@ -2881,7 +3279,14 @@
       const hasContent = !!(model && model.items && model.items.some(Boolean));
 
       const clipboardSection = ctxSection('Clipboard');
-      clipboardSection.appendChild(ctxItem('Clipboard actions are disabled in the browser—use the desktop app for copy/paste support.', null, { disabled: true }));
+      const canPaste = clipboardCanReadImage();
+      clipboardSection.appendChild(ctxItem('Paste image(s) onto this page', function(){
+        const targetPage = (ctxTarget && typeof ctxTarget.pageIndex === 'number') ? ctxTarget.pageIndex : pageIdx;
+        pasteImageFromClipboard({ pageIndex: targetPage });
+      }, { disabled: !canPaste, kbd: MOD_KEY_LABEL + '+V' }));
+      if(!canPaste){
+        clipboardSection.appendChild(ctxItem(CLIPBOARD_UNAVAILABLE_MSG, null, { disabled: true }));
+      }
 
       if (clipboardSection.querySelectorAll('.ctx-item').length){
         rootEl.appendChild(clipboardSection);
