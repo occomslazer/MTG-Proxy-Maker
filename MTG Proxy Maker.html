@@ -995,6 +995,7 @@
                   <li><b>Alt+Arrows</b> – Reorder focused cell</li>
                   <li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>
                   <li><b>Delete/Backspace</b> – Clear focused cell</li>
+                  <li><b>Clipboard actions</b> – Copy/paste works in browsers that support image clipboard APIs. If your browser blocks it, <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">download the desktop app</a> for full support.</li>
                   <li><b>1–9</b> – Focus a cell</li>
                   <li><b>Enter</b> in card field – Add card</li>
                   <li><b>P</b> – Print all pages</li>
@@ -1011,6 +1012,7 @@
                   <li>Drag images anywhere to auto-fill; drag a filled cell to move/swap; drag off the page to delete.</li>
                   <li>To <b>duplicate</b>, hold <b>D</b> while dragging and drop on the target cell.</li>
                   <li>Double-click a cell to replace its image.</li>
+                  <li>Clipboard paste works in supported browsers (you may need to grant permission). The <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> remains available if your browser doesn’t allow it.</li>
                   <li>New pages are created automatically when needed.</li>
                   <li><b>Print</b> prints all pages exact size.</li>
                 </ul>
@@ -1032,6 +1034,7 @@
             </div>
 
             <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
+            <p class="footnote">⚠️ Clipboard features (copy/paste, right-click actions) require a browser that supports the image clipboard APIs and may prompt for permission. If it’s unavailable, the <a href="https://github.com/OccamIndustries/MTG-Proxy-Maker/releases" target="_blank" rel="noopener">desktop app</a> still offers full support.</p>
 
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
@@ -2187,18 +2190,12 @@
       let placed = 0;
       let pos = {page: pageIdx, index: targetIdx};
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        try{
-          const item = await createStoredItemFromDataUrl(dataUrl);
-          if(!item) return;
-          const m = pages[pos.page];
-          if(!m) return;
-          placeImage(m, pos.index, item);
-          placed++;
-          const next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
-          pos = next;
-        }catch(err){
-          console.error('Failed to store dropped image', err);
-        }
+        const m = pages[pos.page];
+        if(!m) return;
+        placeImage(m, pos.index, dataUrl);
+        placed++;
+        const next = nextEmptySlotFrom({page: pos.page, index: pos.index+1}) || ensurePageForAppend();
+        pos = next;
       });
       return placed;
     }
@@ -2228,24 +2225,17 @@
 
       let placed = 0;
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        try{
-          const item = await createStoredItemFromDataUrl(dataUrl);
-          if(!item) return;
-          const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
-          const m = pages[target.page];
-          if(!m) return;
-          placeImage(m, target.index, item);
-          placed++;
+        const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+        const m = pages[target.page];
+        placeImage(m, target.index, dataUrl);
+        placed++;
 
-          if(usingPreferredFirst){
-            usingPreferredFirst = false;
-            pos = nextEmptySlot(target.page) || ensurePageForAppend();
-          } else {
-            var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
-          }
-        }catch(err){
-          console.error('Failed to store image file', err);
+        if(usingPreferredFirst){
+          usingPreferredFirst = false;
+          pos = nextEmptySlot(target.page) || ensurePageForAppend();
+        } else {
+          var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
+          pos = nextEmptySlot(startFrom) || ensurePageForAppend();
         }
       });
       return placed;
