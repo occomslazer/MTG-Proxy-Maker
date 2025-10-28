@@ -454,7 +454,22 @@
 
     /* ===== Environment & storage helpers ===== */
     const ELECTRON_DETECTED = typeof window !== 'undefined'
-      && !!(window.process && window.process.versions && window.process.versions.electron);
+      && (function(){
+        if (window.process && window.process.versions && window.process.versions.electron){
+          return true;
+        }
+        const nav = (typeof navigator !== 'undefined') ? navigator : null;
+        if (nav){
+          const agent = (nav.userAgent || nav.appVersion || '').toString();
+          if (/Electron/i.test(agent)){ return true; }
+        }
+        if (typeof window.require === 'function'){
+          try {
+            return !!window.require('electron');
+          } catch(_){ }
+        }
+        return false;
+      })();
 
     const IS_MAC = typeof navigator !== 'undefined'
       && /Mac|iPhone|iPad|iPod/.test((navigator.platform || navigator.userAgent || '').toString());
