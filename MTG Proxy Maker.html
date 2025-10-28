@@ -1240,35 +1240,26 @@
     }
 
     /* ===== Print/Preview mode switching ===== */
-    let FORCE_PRINT_MATH = false; // kept for compatibility; not used in measurement anymore
     function refreshCutOverlays(){ pages.forEach(queueCutOverlay); }
     const mqlPrint = window.matchMedia && window.matchMedia('print');
     if (mqlPrint){
+      const onPrintChange = () => {
+        refreshCutOverlays();
+        setTimeout(refreshCutOverlays, 50);
+      };
       if (mqlPrint.addEventListener){
-        mqlPrint.addEventListener('change', e => {
-          FORCE_PRINT_MATH = e.matches;
-          refreshCutOverlays();
-          setTimeout(refreshCutOverlays, 50); // allow layout to settle in preview
-        });
+        mqlPrint.addEventListener('change', onPrintChange);
       } else if (mqlPrint.addListener){
-        mqlPrint.addListener(e => {
-          FORCE_PRINT_MATH = e.matches;
-          refreshCutOverlays();
-          setTimeout(refreshCutOverlays, 50);
-        });
+        mqlPrint.addListener(onPrintChange);
       }
     }
     window.addEventListener('beforeprint', () => {
       ctxHide();
-      FORCE_PRINT_MATH = true;
       refreshCutOverlays();
       setTimeout(refreshCutOverlays, 50);
     });
-    window.addEventListener('afterprint', () => {
-      FORCE_PRINT_MATH = false;
-      refreshCutOverlays();
-    });
-    window.addEventListener('pageshow', () => { FORCE_PRINT_MATH = false; refreshCutOverlays(); doUpdate(); });
+    window.addEventListener('afterprint', () => { refreshCutOverlays(); });
+    window.addEventListener('pageshow', () => { refreshCutOverlays(); doUpdate(); });
 
     function dataTransferHasImage(dt){
       if (!dt) return false;
@@ -1285,6 +1276,49 @@
         });
       }
       return false;
+    }
+
+    async function processDroppedImageData(dt, opts){
+      if (!dt) return 0;
+      const files = dt.files ? filterImageFiles(dt.files) : [];
+      if (files.length){
+        if (opts && opts.targetCell && opts.targetCell.model){
+          return handleFilesIntoCell(opts.targetCell.model, opts.targetCell.index, files);
+        }
+        const fileOpts = {};
+        if (opts && typeof opts.startPage === 'number') fileOpts.startPage = opts.startPage;
+        if (opts && opts.preferredSlot) fileOpts.preferredSlot = opts.preferredSlot;
+        if (opts && opts.allowOverwrite) fileOpts.allowOverwrite = true;
+        return handleFiles(files, fileOpts);
+      }
+
+      const urls = extractUrlsFromDataTransfer(dt);
+      if (urls.length){
+        const urlOpts = {};
+        if (opts && typeof opts.startPage === 'number') urlOpts.startPage = opts.startPage;
+        if (opts && opts.preferredSlot) urlOpts.preferredSlot = opts.preferredSlot;
+        if (opts && opts.allowOverwrite) urlOpts.allowOverwrite = true;
+        return handleImageUrls(urls, urlOpts);
+      }
+      return 0;
+    }
+
+    async function handleDropEvent(e, opts){
+      const dt = e.dataTransfer || null;
+      if (!dataTransferHasImage(dt)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        const placed = await processDroppedImageData(dt, opts);
+        if (placed > 0){
+          setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
+        } else {
+          setStatus('No images found in dropped data');
+        }
+      } catch (err){
+        console.error('Failed to add dropped images', err);
+        setStatus('Failed to add dropped images');
+      }
     }
 
     function parseUriList(text){
@@ -1527,36 +1561,15 @@
           cell.classList.remove('drop-target');
         });
         cell.addEventListener('drop', async (e) => {
-          const dt = e.dataTransfer;
-          if (!dataTransferHasImage(dt)) return;
-          e.preventDefault();
-          e.stopPropagation();
           cell.classList.remove('drop-target');
           const pageIdx = pages.indexOf(model);
-          try{
-            let placed = 0;
-            const files = dt ? filterImageFiles(dt.files) : [];
-            if (files.length){
-              placed = await handleFilesIntoCell(model, idx, files);
-            } else {
-              const urls = extractUrlsFromDataTransfer(dt);
-              if (urls.length){
-                placed = await handleImageUrls(urls, {
-                  preferredSlot: pageIdx === -1 ? null : { page: pageIdx, index: idx },
-                  startPage: pageIdx,
-                  allowOverwrite: true
-                });
-              }
-            }
-            if (placed > 0){
-              setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
-            } else {
-              setStatus('No images found in dropped data');
-            }
-          }catch(err){
-            console.error('Failed to handle dropped images', err);
-            setStatus('Failed to add dropped images');
-          }
+          const preferredSlot = pageIdx === -1 ? null : { page: pageIdx, index: idx };
+          await handleDropEvent(e, {
+            targetCell: { model, index: idx },
+            preferredSlot,
+            startPage: pageIdx >= 0 ? pageIdx : undefined,
+            allowOverwrite: true
+          });
         });
 
         cell.addEventListener('dblclick', function(){
@@ -1578,33 +1591,11 @@
       });
       ['dragleave','drop'].forEach(function(evt){
         model.gridEl.addEventListener(evt, async function(e){
-          const dt = e.dataTransfer;
-          if (!dataTransferHasImage(dt)) return;
+          if (!dataTransferHasImage(e.dataTransfer)) return;
           const p=model.pageEl;
           if(evt==='drop'){
-            e.preventDefault();
-            e.stopPropagation();
             const pageIdx = pages.indexOf(model);
-            try{
-              const files = dt ? filterImageFiles(dt.files) : [];
-              let placed = 0;
-              if (files.length){
-                placed = await handleFiles(files, { startPage: pageIdx });
-              } else {
-                const urls = extractUrlsFromDataTransfer(dt);
-                if (urls.length){
-                  placed = await handleImageUrls(urls, { startPage: pageIdx });
-                }
-              }
-              if (placed > 0){
-                setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
-              } else {
-                setStatus('No images found in dropped data');
-              }
-            }catch(err){
-              console.error('Failed to add dropped images', err);
-              setStatus('Failed to add dropped images');
-            }
+            await handleDropEvent(e, { startPage: pageIdx >= 0 ? pageIdx : undefined });
           } else {
             e.preventDefault();
             e.stopPropagation();
@@ -1865,34 +1856,12 @@
     });
     ['dragleave','drop'].forEach(function(evt){
       pageWrap.addEventListener(evt, async function(e){
-        const dt = e.dataTransfer;
-        if (!dataTransferHasImage(dt)) return;
+        if (!dataTransferHasImage(e.dataTransfer)) return;
         const current = getCurrent();
         if (!current || !current.pageEl) return;
         const pageIdx = pages.indexOf(current);
         if(evt==='drop'){
-          e.preventDefault();
-          e.stopPropagation();
-          try{
-            const files = dt ? filterImageFiles(dt.files) : [];
-            let placed = 0;
-            if (files.length){
-              placed = await handleFiles(files, { startPage: pageIdx });
-            } else {
-              const urls = extractUrlsFromDataTransfer(dt);
-              if (urls.length){
-                placed = await handleImageUrls(urls, { startPage: pageIdx });
-              }
-            }
-            if (placed > 0){
-              setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
-            } else {
-              setStatus('No images found in dropped data');
-            }
-          }catch(err){
-            console.error('Failed to add dropped images', err);
-            setStatus('Failed to add dropped images');
-          }
+          await handleDropEvent(e, { startPage: pageIdx >= 0 ? pageIdx : undefined });
         } else {
           e.preventDefault();
           e.stopPropagation();
@@ -2222,6 +2191,49 @@
       return {page: pages.length-1, index: 0};
     }
 
+    function createPlacementState(opts){
+      const allowOverwrite = !!(opts && opts.allowOverwrite);
+      let startPage = (opts && typeof opts.startPage === 'number') ? opts.startPage : currentPage;
+      if(!pages.length){
+        startPage = 0;
+      } else {
+        if(startPage < 0) startPage = 0;
+        if(startPage >= pages.length) startPage = pages.length - 1;
+      }
+
+      let preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
+      if(preferred){
+        const hasModel = pages[preferred.page] && pages[preferred.page].items;
+        const isValid = hasModel && (pages[preferred.page].items[preferred.index] == null || allowOverwrite);
+        if(!isValid){ preferred = null; }
+      }
+
+      let usingPreferredFirst = !!preferred;
+      let pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
+
+      function claimSlot(){
+        const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+        if(!target) return null;
+        let committed = false;
+        return {
+          target,
+          commit(){
+            if(committed) return;
+            committed = true;
+            if(usingPreferredFirst){
+              usingPreferredFirst = false;
+              pos = nextEmptySlot(target.page) || ensurePageForAppend();
+            } else {
+              const startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
+              pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+            }
+          }
+        };
+      }
+
+      return { claimSlot };
+    }
+
     async function handleFilesIntoCell(model, targetIdx, fileList){
       const files = filterImageFiles(fileList);
       if(!files.length) return 0;
@@ -2253,30 +2265,14 @@
       const files = filterImageFiles(fileList);
       if(!files.length) return 0;
 
-      var preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
-      const allowOverwrite = !!(opts && opts.allowOverwrite);
-      var startPage = (opts && typeof opts.startPage === 'number') ? opts.startPage : currentPage;
-      if(!pages.length){
-        startPage = 0;
-      } else {
-        if(startPage < 0) startPage = 0;
-        if(startPage >= pages.length) startPage = pages.length - 1;
-      }
-
-      if(preferred){
-        var hasModel = pages[preferred.page] && pages[preferred.page].items;
-        var isValid = hasModel && (pages[preferred.page].items[preferred.index] == null || allowOverwrite);
-        if(!isValid){ preferred = null; }
-      }
-
       await imageStoreReady;
-      var usingPreferredFirst = !!preferred;
-      var pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
+      const placement = createPlacementState(opts || null);
 
       let placed = 0;
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
-        if(!target) return;
+        const slot = placement.claimSlot();
+        if(!slot) return;
+        const target = slot.target;
         const m = pages[target.page];
         if(!m) return;
         try{
@@ -2284,14 +2280,7 @@
           if(!item) return;
           placeImage(m, target.index, item);
           placed++;
-
-          if(usingPreferredFirst){
-            usingPreferredFirst = false;
-            pos = nextEmptySlot(target.page) || ensurePageForAppend();
-          } else {
-            var startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
-          }
+          slot.commit();
         }catch(err){
           console.error('Failed to store added image', err);
         }
@@ -2305,24 +2294,7 @@
       }).filter(isProbablyImageUrl);
       if(!urls.length) return 0;
 
-      let startPage = (opts && typeof opts.startPage === 'number') ? opts.startPage : currentPage;
-      if(!pages.length){
-        startPage = 0;
-      } else {
-        if(startPage < 0) startPage = 0;
-        if(startPage >= pages.length) startPage = pages.length - 1;
-      }
-
-      let preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
-      const allowOverwrite = !!(opts && opts.allowOverwrite);
-      if(preferred){
-        const hasModel = pages[preferred.page] && pages[preferred.page].items;
-        const isValid = hasModel && (pages[preferred.page].items[preferred.index] == null || allowOverwrite);
-        if(!isValid){ preferred = null; }
-      }
-
-      let usingPreferredFirst = !!preferred;
-      let pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
+      const placement = createPlacementState(opts || null);
       let placed = 0;
 
       for (const src of urls){
@@ -2330,19 +2302,14 @@
         try{
           const item = await createItemFromSrc(src);
           if(!item) continue;
-          const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+          const slot = placement.claimSlot();
+          if(!slot) continue;
+          const target = slot.target;
           const m = pages[target.page];
           if(!m) continue;
           placeImage(m, target.index, item);
           placed++;
-
-          if(usingPreferredFirst){
-            usingPreferredFirst = false;
-            pos = nextEmptySlot(target.page) || ensurePageForAppend();
-          } else {
-            const startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-            pos = nextEmptySlot(startFrom) || ensurePageForAppend();
-          }
+          slot.commit();
         }catch(err){
           console.error('Failed to handle image URL', err);
         }
