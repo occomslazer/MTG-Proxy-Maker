@@ -1934,23 +1934,46 @@
       }
 
       const seen = new Set();
-      function addFile(file, typeHint){
+      const addFile = function(file, typeHint){
         if(!file || !looksLikeImageFile(file, typeHint)) return false;
         const key = fileIdentityKey(file);
         if(seen.has(key)) return false;
         seen.add(key);
         files.push(file);
         return true;
-      }
+      };
 
       if(cd.items && cd.items.length){
-        Array.from(cd.items).forEach(function(item){
-          if(!item || item.kind !== 'file' || typeof item.getAsFile !== 'function') return;
-          const file = item.getAsFile();
-          if(!file) return;
-          const hint = item.type || file.type || '';
-          addFile(file, hint);
+        const items = Array.from(cd.items).filter(function(it){
+          return it && it.kind === 'file';
         });
+        const imageItems = items.filter(function(it){
+          return /^image\//i.test(it.type || '');
+        });
+        if(imageItems.length){
+          const priority = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp', 'image/tiff', 'image/*'];
+          let chosen = null;
+          for(const pref of priority){
+            if(pref === 'image/*'){
+              if(!chosen && imageItems[0]){
+                chosen = (imageItems[0].type || '').toLowerCase();
+              }
+            } else if(imageItems.some(function(it){ return (it.type || '').toLowerCase() === pref; })){
+              chosen = pref;
+              break;
+            }
+          }
+          const filtered = chosen
+            ? imageItems.filter(function(it){ return (it.type || '').toLowerCase() === chosen; })
+            : imageItems;
+          filtered.forEach(function(it){
+            const f = (typeof it.getAsFile === 'function') ? it.getAsFile() : null;
+            if(f) addFile(f, it.type || f.type || '');
+          });
+          console.log('Unique images detected on paste:', files.length);
+          return files;
+        }
+        // No image items? fall back to cd.files below.
       }
 
       if(cd.files && cd.files.length){
@@ -2100,66 +2123,82 @@
       }
     }
 
+    let _handlingPaste = false;
+
     document.addEventListener('paste', async function(e){
       const active = document.activeElement;
       if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
-      const clipboardData = e.clipboardData || window.clipboardData || null;
-      const focusedCell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
-      const resolved = focusedCell ? resolveModelFromCellEl(focusedCell) : null;
-      const resolvedPageIdx = resolved ? pages.indexOf(resolved.model) : -1;
-
-      if(clipboardData){
-        const files = collectImageFilesFromClipboardData(clipboardData);
-        if(files.length){
-          e.preventDefault();
-          let placed = 0;
-          if(resolved && resolved.model){
-            placed = await handleFilesIntoCell(resolved.model, resolved.index, files);
-          } else {
-            placed = await handleFiles(files);
-          }
-          setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
-          return;
-        }
-
-        let urls = clipboardData.getData ? parseUriList(clipboardData.getData('text/uri-list')) : [];
-        if(!urls.length && clipboardData.getData){
-          const plain = clipboardData.getData('text/plain');
-          if(isProbablyImageUrl(plain)){
-            urls = [plain.trim()];
-          }
-        }
-        if(urls.length){
-          e.preventDefault();
-          let placed = 0;
-          if(resolved && resolved.model){
-            placed = await handleImageUrls(urls, {
-              preferredSlot: resolvedPageIdx === -1 ? null : { page: resolvedPageIdx, index: resolved.index },
-              startPage: resolvedPageIdx,
-              allowOverwrite: true
-            });
-          } else {
-            placed = await handleImageUrls(urls, { startPage: currentPage });
-          }
-          setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
-          return;
-        }
-      }
-
-      if(clipboardCanReadImage()){
+      if(_handlingPaste){
         e.preventDefault();
-        const target = resolved && resolved.model
-          ? { model: resolved.model, index: resolved.index, pageIndex: resolvedPageIdx, allowOverwrite: true }
-          : { pageIndex: currentPage };
-        await pasteImageFromClipboard(target);
+        e.stopImmediatePropagation();
         return;
       }
+      _handlingPaste = true;
 
-      if(clipboardData){
-        setStatus('Clipboard does not contain image data');
-      } else {
-        setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+      try {
+        const clipboardData = e.clipboardData || window.clipboardData || null;
+        const focusedCell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
+        const resolved = focusedCell ? resolveModelFromCellEl(focusedCell) : null;
+        const resolvedPageIdx = resolved ? pages.indexOf(resolved.model) : -1;
+
+        if(clipboardData){
+          const files = collectImageFilesFromClipboardData(clipboardData);
+          if(files.length){
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            let placed = 0;
+            if(resolved && resolved.model){
+              placed = await handleFilesIntoCell(resolved.model, resolved.index, files);
+            } else {
+              placed = await handleFiles(files);
+            }
+            setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
+            return;
+          }
+
+          let urls = clipboardData.getData ? parseUriList(clipboardData.getData('text/uri-list')) : [];
+          if(!urls.length && clipboardData.getData){
+            const plain = clipboardData.getData('text/plain');
+            if(isProbablyImageUrl(plain)){
+              urls = [plain.trim()];
+            }
+          }
+          if(urls.length){
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            let placed = 0;
+            if(resolved && resolved.model){
+              placed = await handleImageUrls(urls, {
+                preferredSlot: resolvedPageIdx === -1 ? null : { page: resolvedPageIdx, index: resolved.index },
+                startPage: resolvedPageIdx,
+                allowOverwrite: true
+              });
+            } else {
+              placed = await handleImageUrls(urls, { startPage: currentPage });
+            }
+            setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
+            return;
+          }
+        }
+
+        if(clipboardCanReadImage()){
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          const target = resolved && resolved.model
+            ? { model: resolved.model, index: resolved.index, pageIndex: resolvedPageIdx, allowOverwrite: true }
+            : { pageIndex: currentPage };
+          await pasteImageFromClipboard(target);
+          return;
+        }
+
+        if(clipboardData){
+          setStatus('Clipboard does not contain image data');
+        } else {
+          setStatus(CLIPBOARD_UNAVAILABLE_MSG);
+        }
+      } finally {
+        _handlingPaste = false;
       }
     });
 
