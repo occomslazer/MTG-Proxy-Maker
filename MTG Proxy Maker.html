@@ -2490,8 +2490,13 @@
       const pageWpx = parseFloat(cs.getPropertyValue('--page-w')) * pxPerIn;
       const pageHpx = parseFloat(cs.getPropertyValue('--page-h')) * pxPerIn;
 
-      var scale=Math.min(availW/pageWpx, availH/pageHpx, 1);
-      document.documentElement.style.setProperty('--preview-scale', String(scale>0?scale:1));
+      const ratios = [];
+      if (pageWpx > 0 && availW > 0){ ratios.push(availW / pageWpx); }
+      if (pageHpx > 0 && availH > 0){ ratios.push(availH / pageHpx); }
+
+      var scale = ratios.length ? Math.min(1, ...ratios) : 1;
+      if (!(scale > 0)){ scale = 1; }
+      document.documentElement.style.setProperty('--preview-scale', String(scale));
     }
 
     function debounce(fn, ms){ var t; return function(){ clearTimeout(t); t=setTimeout(fn, ms); }; }
