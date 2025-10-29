@@ -25,6 +25,9 @@
 
       /* horizontal offset for fine printer tuning */
       --grid-left: 0in;
+      --cut-mark-length: 0.15in;
+      --cut-mark-thickness: 0.00694in; /* 0.5pt */
+      --cut-mark-color: rgba(17, 24, 39, 0.6);
     }
 
     html, body { height: 100%; margin: 0; overflow: hidden; background: #f3f4f6; color: #111827; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
@@ -72,11 +75,50 @@
     .pages-controls .pill { font-variant-numeric: tabular-nums; padding: 4px 8px; border:1px solid #e5e7eb; border-radius: 999px; background:#f9fafb; }
 
     .grid { width: var(--grid-w); height: var(--grid-h); display: grid; grid-template-columns: repeat(var(--cols), var(--cell-w)); grid-template-rows: repeat(var(--rows), var(--cell-h)); gap: var(--grid-gap); position: relative; z-index: 1; transform: translateX(var(--grid-left)); }
-
-    .page .cut-overlay { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity .15s ease-in-out; z-index: 3; transform: translateX(var(--grid-left)); }
-    .cut-overlay svg { position:absolute; inset:0; width:100%; height:100%; display:block; }
-    .show-cuts .cut-overlay { opacity: 1; }
-    .show-cuts .cell { border-color: transparent !important; }
+    .grid.cut-marks::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      transform: translateX(var(--grid-left));
+      color: var(--cut-mark-color);
+      background-image:
+        repeating-linear-gradient(
+          to right,
+          currentColor 0 var(--cut-mark-thickness),
+          transparent var(--cut-mark-thickness) calc(var(--cell-w) + var(--grid-gap))
+        ),
+        repeating-linear-gradient(
+          to right,
+          currentColor 0 var(--cut-mark-thickness),
+          transparent var(--cut-mark-thickness) calc(var(--cell-w) + var(--grid-gap))
+        ),
+        repeating-linear-gradient(
+          to bottom,
+          currentColor 0 var(--cut-mark-thickness),
+          transparent var(--cut-mark-thickness) calc(var(--cell-h) + var(--grid-gap))
+        ),
+        repeating-linear-gradient(
+          to bottom,
+          currentColor 0 var(--cut-mark-thickness),
+          transparent var(--cut-mark-thickness) calc(var(--cell-h) + var(--grid-gap))
+        );
+      background-size:
+        calc(var(--cell-w) + var(--grid-gap)) var(--cut-mark-length),
+        calc(var(--cell-w) + var(--grid-gap)) var(--cut-mark-length),
+        var(--cut-mark-length) calc(var(--cell-h) + var(--grid-gap)),
+        var(--cut-mark-length) calc(var(--cell-h) + var(--grid-gap));
+      background-position:
+        calc(-1 * var(--grid-left)) 0,
+        calc(-1 * var(--grid-left)) calc(100% - var(--cut-mark-length)),
+        calc(-1 * var(--grid-left)) 0,
+        calc(100% - var(--cut-mark-length) - var(--grid-left)) 0;
+      background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
+      opacity: 0;
+      z-index: 3;
+    }
+    body.show-cuts .grid.cut-marks::after { opacity: 1; }
+    body.show-cuts .cell { border-color: transparent !important; }
 
     .cell { width: var(--cell-w); height: var(--cell-h); border: 0.5pt dashed var(--guide-color); background: #f9fafb; position: relative; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; contain: layout paint size; }
     .cell img { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: none; image-rendering: auto; -webkit-user-drag: none; user-select: none; }
@@ -1229,7 +1271,7 @@
     }
 
     /* ===== Model ===== */
-    var pages = []; // {items:Array(9), pageEl, gridEl, cells[], cutOverlayEl}
+    var pages = []; // {items:Array(9), pageEl, gridEl, cells[]}
     var currentPage = 0;
     let ctxTarget = null;
 
@@ -1244,13 +1286,12 @@
         var ph = document.createElement('div'); ph.className = 'placeholder'; ph.textContent = 'Cell ' + (i+1); cell.appendChild(ph);
         grid.appendChild(cell); cells.push(cell);
       }
-      var overlay = document.createElement('div'); overlay.className = 'cut-overlay'; p.appendChild(overlay);
       p.appendChild(grid);
       pageWrap.appendChild(p);
 
-      var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, cutOverlayEl: overlay };
+      var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells };
       wireGridEvents(model);
-      queueCutOverlay(model);
+      applyCutMarksToModel(model, !!(toggleCutMarks && toggleCutMarks.checked));
       return model;
     }
 
@@ -1259,41 +1300,17 @@
       currentPage = Math.max(0, Math.min(idx, pages.length-1));
       pages.forEach((p,i)=>p.pageEl.classList.toggle('current', i===currentPage));
       pageBadge.textContent = 'Page ' + (currentPage+1) + ' / ' + pages.length;
-      applyCutOverlay(); doUpdate();
+      doUpdate();
       removePageBtn.disabled = (pages.length <= 1);
       saveState();
     }
 
     /* ===== Print/Preview mode switching ===== */
-    function refreshCutOverlays(){ pages.forEach(queueCutOverlay); }
-    let preferCssCutOverlay = false;
-    const mqlPrint = window.matchMedia && window.matchMedia('print');
-    if (mqlPrint){
-      preferCssCutOverlay = !!mqlPrint.matches;
-      const onPrintChange = (event) => {
-        preferCssCutOverlay = !!(event ? event.matches : mqlPrint.matches);
-        refreshCutOverlays();
-        setTimeout(refreshCutOverlays, 50);
-      };
-      if (mqlPrint.addEventListener){
-        mqlPrint.addEventListener('change', onPrintChange);
-      } else if (mqlPrint.addListener){
-        mqlPrint.addListener(onPrintChange);
-      }
-    }
     window.addEventListener('beforeprint', () => {
       ctxHide();
-      preferCssCutOverlay = true;
-      refreshCutOverlays();
-      setTimeout(refreshCutOverlays, 50);
-    });
-    window.addEventListener('afterprint', () => {
-      preferCssCutOverlay = !!(mqlPrint && mqlPrint.matches);
-      refreshCutOverlays();
+      syncCutMarksState();
     });
     window.addEventListener('pageshow', () => {
-      preferCssCutOverlay = !!(mqlPrint && mqlPrint.matches);
-      refreshCutOverlays();
       doUpdate();
     });
 
@@ -1755,146 +1772,28 @@
       document.documentElement.style.setProperty('--guide-color', show ? 'rgba(0,0,0,.25)' : 'transparent');
     });
 
-    // NEW: Always measure actual DOM positions (screen & print) for perfect alignment
-    function renderCutOverlay(model){
-      const overlay = model.cutOverlayEl;
-
-      if (!overlay){
-        return;
-      }
-
-      const metrics = readCssInches();
-      const { pageW, pageH, cellW, cellH, marginX, marginY, gap } = metrics;
-      const safeGap = isFinite(gap) ? gap : 0;
-
-      const renderFromCss = () => {
-        if (!pageW || !pageH || !cellW || !cellH){
-          overlay.innerHTML = `<svg viewBox="0 0 1 1"></svg>`;
-          return true;
-        }
-
-        const safeMarginX = isFinite(marginX) ? marginX : 0;
-        const safeMarginY = isFinite(marginY) ? marginY : 0;
-
-        const xs = [];
-        for (let i = 0; i <= cols; i++){
-          const gapBefore = i > 0 ? (i - 1) * safeGap : 0;
-          xs.push(safeMarginX + (i * cellW) + gapBefore);
-        }
-
-        const ys = [];
-        for (let j = 0; j <= rows; j++){
-          const gapBefore = j > 0 ? (j - 1) * safeGap : 0;
-          ys.push(safeMarginY + (j * cellH) + gapBefore);
-        }
-
-        overlay.innerHTML =
-          `<svg viewBox="0 0 ${pageW} ${pageH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">`
-             + `<g stroke="#9ca3af" stroke-width="1" fill="none">`
-             + `${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${pageH}"/>`).join('')}`
-             + `${ys.map(y=>`<line x1="0" y1="${y}" x2="${pageW}" y2="${y}"/>`).join('')}`
-             + '</g></svg>';
-        return true;
-      };
-
-      if (preferCssCutOverlay){
-        renderFromCss();
-        return;
-      }
-
-      // Layout dimensions (not affected by preview scaling)
-      const layoutWidth = overlay.offsetWidth || overlay.clientWidth;
-      const layoutHeight = overlay.offsetHeight || overlay.clientHeight;
-
-      if (!layoutWidth || !layoutHeight){
-        renderFromCss();
-        return;
-      }
-
-      // Screen-space rect (includes preview scale) for mapping ratios
-      const ovb = overlay.getBoundingClientRect();
-      if (!ovb.width || !ovb.height){
-        renderFromCss();
-        return;
-      }
-      const scaleX = layoutWidth / ovb.width;
-      const scaleY = layoutHeight / ovb.height;
-
-      const firstRow = model.cells.slice(0, cols);
-      const firstCol = model.cells.filter((_, i) => i % cols === 0);
-      if (!firstRow.length || !firstCol.length) {
-        renderFromCss();
-        return;
-      }
-
-      // Grid bounds (relative to overlay, mapped back to layout units)
-      const left   = (firstRow[0].getBoundingClientRect().left  - ovb.left) * scaleX;
-      const right  = (firstRow[firstRow.length-1].getBoundingClientRect().right - ovb.left) * scaleX;
-      const top    = (firstCol[0].getBoundingClientRect().top   - ovb.top) * scaleY;
-      const bottom = (firstCol[firstCol.length-1].getBoundingClientRect().bottom - ovb.top) * scaleY;
-
-      if (!isFinite(left) || !isFinite(right) || !isFinite(top) || !isFinite(bottom) || right <= left || bottom <= top){
-        renderFromCss();
-        return;
-      }
-
-      const measuredCellWidth = firstRow[0].getBoundingClientRect().width * scaleX;
-      const measuredCellHeight = firstCol[0].getBoundingClientRect().height * scaleY;
-
-      const measuredGapX = firstRow.length > 1
-        ? (firstRow[1].getBoundingClientRect().left - firstRow[0].getBoundingClientRect().right) * scaleX
-        : safeGap;
-      const measuredGapY = firstCol.length > 1
-        ? (firstCol[1].getBoundingClientRect().top - firstCol[0].getBoundingClientRect().bottom) * scaleY
-        : safeGap;
-
-      const cw = measuredCellWidth;
-      const ch = measuredCellHeight;
-      const gapX = Math.max(0, isFinite(measuredGapX) ? measuredGapX : safeGap);
-      const gapY = Math.max(0, isFinite(measuredGapY) ? measuredGapY : safeGap);
-
-      if (!isFinite(cw) || !isFinite(ch) || cw <= 0 || ch <= 0){
-        renderFromCss();
-        return;
-      }
-
-      // Lines at every cell boundary, including outer edges
-      const xs = [];
-      for (let i = 0; i <= cols; i++){
-        const gapBefore = i > 0 ? (i - 1) * gapX : 0;
-        xs.push(left + (i * cw) + gapBefore);
-      }
-      const ys = [];
-      for (let j = 0; j <= rows; j++){
-        const gapBefore = j > 0 ? (j - 1) * gapY : 0;
-        ys.push(top + (j * ch) + gapBefore);
-      }
-
-      overlay.innerHTML =
-        `<svg viewBox="0 0 ${layoutWidth} ${layoutHeight}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">`
-           + `<g stroke="#9ca3af" stroke-width="1" fill="none">`
-           + `${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${layoutHeight}"/>`).join('')}`
-           + `${ys.map(y=>`<line x1="0" y1="${y}" x2="${layoutWidth}" y2="${y}"/>`).join('')}`
-           + '</g></svg>';
-    }
-    function queueCutOverlay(model){
-      if (!model) return;
-      requestAnimationFrame(() => requestAnimationFrame(() => renderCutOverlay(model)));
+    function applyCutMarksToModel(model, show){
+      if (!model || !model.gridEl) return;
+      model.gridEl.classList.toggle('cut-marks', show);
     }
 
-    function applyCutOverlay(){
-      pages.forEach(m=>m.pageEl.classList.toggle('show-cuts', toggleCutMarks.checked));
-      pages.forEach(queueCutOverlay); // rebuild when toggled
+    function syncCutMarksState(){
+      const show = !!(toggleCutMarks && toggleCutMarks.checked);
+      document.body.classList.toggle('show-cuts', show);
+      pages.forEach(function(model){ applyCutMarksToModel(model, show); });
     }
-    toggleCutMarks.addEventListener('change', applyCutOverlay);
 
-    // Rebuild overlays on layout changes
+    if (toggleCutMarks){
+      toggleCutMarks.addEventListener('change', syncCutMarksState);
+    }
+
+    // Refresh layout-dependent styling on changes
     function doUpdate(){
       refreshPxPerIn();
       const cur = getCurrent();
       if (cur) cur.gridEl.querySelectorAll('img').forEach(img=>fitImage(img));
       updatePreviewScale();
-      if (cur) { queueCutOverlay(cur); }
+      syncCutMarksState();
     }
 
     /* ===== Files & placement ===== */
@@ -2349,7 +2248,7 @@
     function ensurePageForAppend(){
       var slot = nextEmptySlot(0);
       if(slot) return slot;
-      var m=createPage(); pages.push(m); showPage(pages.length-1); saveState();
+      var m=createPage(); pages.push(m); syncCutMarksState(); showPage(pages.length-1); saveState();
       return {page: pages.length-1, index: 0};
     }
 
@@ -2481,7 +2380,13 @@
     }
 
     /* ===== Pager & Clear helpers ===== */
-    function addPage(){ pages.push(createPage()); showPage(pages.length-1); saveState(); }
+    function addPage(){
+      const model = createPage();
+      pages.push(model);
+      syncCutMarksState();
+      showPage(pages.length-1);
+      saveState();
+    }
 
     function removeCurrentPage(forceConfirm){
       if(pages.length <= 1){ alert('Cannot remove the last page.'); return false; }
@@ -2522,6 +2427,7 @@
       pages.length = 0;
       const m = createPage();
       pages.push(m);
+      syncCutMarksState();
       renderGrid(m);
       showPage(0);
       setStatus('Cleared ALL pages');
@@ -2596,7 +2502,7 @@
 
       if(e.key==='p' || e.key==='P'){ e.preventDefault(); printBtn.click(); return; }
       if(e.key==='g' || e.key==='G'){ toggleGuides.checked=!toggleGuides.checked; toggleGuides.dispatchEvent(new Event('change')); return; }
-      if(e.key==='m' || e.key==='M'){ toggleCutMarks.checked=!toggleCutMarks.checked; applyCutOverlay(); return; }
+      if(e.key==='m' || e.key==='M'){ toggleCutMarks.checked=!toggleCutMarks.checked; syncCutMarksState(); return; }
 
       if(e.key==='Home'){ e.preventDefault(); showPage(0); return; }
       if(e.key==='End'){ e.preventDefault(); showPage(pages.length-1); return; }
@@ -3066,6 +2972,7 @@
           m.items = items;
           renderGrid(m);
         }
+        syncCutMarksState();
         showPage(Math.min(Math.max(0, state.current||0), pages.length-1));
         if (mutated){ saveState(); }
         return true;
@@ -3128,8 +3035,7 @@
         localStorage.setItem('mtgTuning', JSON.stringify(prev));
       }catch(_){}
 
-      // reflow: cut overlay + image fits use these values
-      pages.forEach(queueCutOverlay);
+      // reflow: update previews and guides with new dimensions
       doUpdate();
     }
 
@@ -3498,7 +3404,7 @@
       }, { kbd: 'G' }));
       displaySection.appendChild(ctxItem('Toggle cut marks', function(){
         toggleCutMarks.checked = !toggleCutMarks.checked;
-        applyCutOverlay();
+        syncCutMarksState();
       }, { kbd: 'M' }));
 
       if (displaySection.querySelectorAll('.ctx-item').length){
@@ -3624,6 +3530,7 @@
     (async function init(){
       const firstPage = createPage();
       pages.push(firstPage);
+      syncCutMarksState();
       renderGrid(firstPage);
       let loaded = false;
       try{
@@ -3634,7 +3541,6 @@
       if (!loaded){
         showPage(0);
       }
-      applyCutOverlay();
       doUpdate();
       loadTheme();
       loadTuning();
