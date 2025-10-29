@@ -1266,9 +1266,12 @@
 
     /* ===== Print/Preview mode switching ===== */
     function refreshCutOverlays(){ pages.forEach(queueCutOverlay); }
+    let preferCssCutOverlay = false;
     const mqlPrint = window.matchMedia && window.matchMedia('print');
     if (mqlPrint){
-      const onPrintChange = () => {
+      preferCssCutOverlay = !!mqlPrint.matches;
+      const onPrintChange = (event) => {
+        preferCssCutOverlay = !!(event ? event.matches : mqlPrint.matches);
         refreshCutOverlays();
         setTimeout(refreshCutOverlays, 50);
       };
@@ -1280,11 +1283,19 @@
     }
     window.addEventListener('beforeprint', () => {
       ctxHide();
+      preferCssCutOverlay = true;
       refreshCutOverlays();
       setTimeout(refreshCutOverlays, 50);
     });
-    window.addEventListener('afterprint', () => { refreshCutOverlays(); });
-    window.addEventListener('pageshow', () => { refreshCutOverlays(); doUpdate(); });
+    window.addEventListener('afterprint', () => {
+      preferCssCutOverlay = !!(mqlPrint && mqlPrint.matches);
+      refreshCutOverlays();
+    });
+    window.addEventListener('pageshow', () => {
+      preferCssCutOverlay = !!(mqlPrint && mqlPrint.matches);
+      refreshCutOverlays();
+      doUpdate();
+    });
 
     function dataTransferHasImage(dt){
       if (!dt) return false;
@@ -1752,8 +1763,11 @@
         return;
       }
 
+      const metrics = readCssInches();
+      const { pageW, pageH, cellW, cellH, marginX, marginY, gap } = metrics;
+      const safeGap = isFinite(gap) ? gap : 0;
+
       const renderFromCss = () => {
-        const { pageW, pageH, cellW, cellH, marginX, marginY, gap } = readCssInches();
         if (!pageW || !pageH || !cellW || !cellH){
           overlay.innerHTML = `<svg viewBox="0 0 1 1"></svg>`;
           return true;
@@ -1764,25 +1778,29 @@
 
         const xs = [];
         for (let i = 0; i <= cols; i++){
-          const gapBefore = i > 0 ? (i - 1) * (gap || 0) : 0;
+          const gapBefore = i > 0 ? (i - 1) * safeGap : 0;
           xs.push(safeMarginX + (i * cellW) + gapBefore);
         }
 
         const ys = [];
         for (let j = 0; j <= rows; j++){
-          const gapBefore = j > 0 ? (j - 1) * (gap || 0) : 0;
+          const gapBefore = j > 0 ? (j - 1) * safeGap : 0;
           ys.push(safeMarginY + (j * cellH) + gapBefore);
         }
 
         overlay.innerHTML =
-          `<svg viewBox="0 0 ${pageW} ${pageH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">
-             <g stroke="#9ca3af" stroke-width="1" fill="none">
-               ${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${pageH}"/>`).join('')}
-               ${ys.map(y=>`<line x1="0" y1="${y}" x2="${pageW}" y2="${y}"/>`).join('')}
-             </g>
-           </svg>`;
+          `<svg viewBox="0 0 ${pageW} ${pageH}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">`
+             + `<g stroke="#9ca3af" stroke-width="1" fill="none">`
+             + `${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${pageH}"/>`).join('')}`
+             + `${ys.map(y=>`<line x1="0" y1="${y}" x2="${pageW}" y2="${y}"/>`).join('')}`
+             + '</g></svg>';
         return true;
       };
+
+      if (preferCssCutOverlay){
+        renderFromCss();
+        return;
+      }
 
       // Layout dimensions (not affected by preview scaling)
       const layoutWidth = overlay.offsetWidth || overlay.clientWidth;
@@ -1820,8 +1838,20 @@
         return;
       }
 
-      const cw = (right - left) / cols;
-      const ch = (bottom - top) / rows;
+      const measuredCellWidth = firstRow[0].getBoundingClientRect().width * scaleX;
+      const measuredCellHeight = firstCol[0].getBoundingClientRect().height * scaleY;
+
+      const measuredGapX = firstRow.length > 1
+        ? (firstRow[1].getBoundingClientRect().left - firstRow[0].getBoundingClientRect().right) * scaleX
+        : safeGap;
+      const measuredGapY = firstCol.length > 1
+        ? (firstCol[1].getBoundingClientRect().top - firstCol[0].getBoundingClientRect().bottom) * scaleY
+        : safeGap;
+
+      const cw = measuredCellWidth;
+      const ch = measuredCellHeight;
+      const gapX = Math.max(0, isFinite(measuredGapX) ? measuredGapX : safeGap);
+      const gapY = Math.max(0, isFinite(measuredGapY) ? measuredGapY : safeGap);
 
       if (!isFinite(cw) || !isFinite(ch) || cw <= 0 || ch <= 0){
         renderFromCss();
@@ -1830,19 +1860,23 @@
 
       // Lines at every cell boundary, including outer edges
       const xs = [];
-      for (let i = 0; i <= cols; i++) xs.push(left + i * cw);
+      for (let i = 0; i <= cols; i++){
+        const gapBefore = i > 0 ? (i - 1) * gapX : 0;
+        xs.push(left + (i * cw) + gapBefore);
+      }
       const ys = [];
-      for (let j = 0; j <= rows; j++) ys.push(top + j * ch);
+      for (let j = 0; j <= rows; j++){
+        const gapBefore = j > 0 ? (j - 1) * gapY : 0;
+        ys.push(top + (j * ch) + gapBefore);
+      }
 
       overlay.innerHTML =
-        `<svg viewBox="0 0 ${layoutWidth} ${layoutHeight}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">
-           <g stroke="#9ca3af" stroke-width="1" fill="none">
-             ${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${layoutHeight}"/>`).join('')}
-             ${ys.map(y=>`<line x1="0" y1="${y}" x2="${layoutWidth}" y2="${y}"/>`).join('')}
-           </g>
-         </svg>`;
+        `<svg viewBox="0 0 ${layoutWidth} ${layoutHeight}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" shape-rendering="crispEdges">`
+           + `<g stroke="#9ca3af" stroke-width="1" fill="none">`
+           + `${xs.map(x=>`<line x1="${x}" y1="0" x2="${x}" y2="${layoutHeight}"/>`).join('')}`
+           + `${ys.map(y=>`<line x1="0" y1="${y}" x2="${layoutWidth}" y2="${y}"/>`).join('')}`
+           + '</g></svg>';
     }
-
     function queueCutOverlay(model){
       if (!model) return;
       requestAnimationFrame(() => requestAnimationFrame(() => renderCutOverlay(model)));
