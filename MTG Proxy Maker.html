@@ -80,7 +80,6 @@
       position: absolute;
       inset: 0;
       pointer-events: none;
-      transform: translateX(var(--grid-left));
       color: var(--cut-mark-color);
       background-image:
         repeating-linear-gradient(
@@ -109,10 +108,10 @@
         var(--cut-mark-length) calc(var(--cell-h) + var(--grid-gap)),
         var(--cut-mark-length) calc(var(--cell-h) + var(--grid-gap));
       background-position:
-        calc(-1 * var(--grid-left)) 0,
-        calc(-1 * var(--grid-left)) calc(100% - var(--cut-mark-length)),
-        calc(-1 * var(--grid-left)) 0,
-        calc(100% - var(--cut-mark-length) - var(--grid-left)) 0;
+        0 0,
+        0 calc(100% - var(--cut-mark-length)),
+        0 0,
+        calc(100% - var(--cut-mark-length)) 0;
       background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
       opacity: 0;
       z-index: 3;
