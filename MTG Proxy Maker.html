@@ -25,9 +25,10 @@
 
       /* horizontal offset for fine printer tuning */
       --grid-left: 0in;
-      --cut-mark-length: 0.15in;
-      --cut-mark-thickness: 0.00694in; /* 0.5pt */
-      --cut-mark-color: rgba(17, 24, 39, 0.6);
+      --cut-mark-length: 0.18in;
+      --cut-mark-thickness: 0.0125in; /* ~0.9pt */
+      --cut-mark-color: rgba(17, 24, 39, 0.85);
+      --cut-mark-inset: 0.05in;
     }
 
     html, body { height: 100%; margin: 0; overflow: hidden; background: #f3f4f6; color: #111827; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
@@ -75,48 +76,29 @@
     .pages-controls .pill { font-variant-numeric: tabular-nums; padding: 4px 8px; border:1px solid #e5e7eb; border-radius: 999px; background:#f9fafb; }
 
     .grid { width: var(--grid-w); height: var(--grid-h); display: grid; grid-template-columns: repeat(var(--cols), var(--cell-w)); grid-template-rows: repeat(var(--rows), var(--cell-h)); gap: var(--grid-gap); position: relative; z-index: 1; transform: translateX(var(--grid-left)); }
-    .grid.cut-marks::after {
-      content: "";
+    .grid .cut-marks-layer {
       position: absolute;
       inset: 0;
       pointer-events: none;
-      color: var(--cut-mark-color);
-      background-image:
-        repeating-linear-gradient(
-          to right,
-          currentColor 0 var(--cut-mark-thickness),
-          transparent var(--cut-mark-thickness) calc(var(--cell-w) + var(--grid-gap))
-        ),
-        repeating-linear-gradient(
-          to right,
-          currentColor 0 var(--cut-mark-thickness),
-          transparent var(--cut-mark-thickness) calc(var(--cell-w) + var(--grid-gap))
-        ),
-        repeating-linear-gradient(
-          to bottom,
-          currentColor 0 var(--cut-mark-thickness),
-          transparent var(--cut-mark-thickness) calc(var(--cell-h) + var(--grid-gap))
-        ),
-        repeating-linear-gradient(
-          to bottom,
-          currentColor 0 var(--cut-mark-thickness),
-          transparent var(--cut-mark-thickness) calc(var(--cell-h) + var(--grid-gap))
-        );
-      background-size:
-        calc(var(--cell-w) + var(--grid-gap)) var(--cut-mark-length),
-        calc(var(--cell-w) + var(--grid-gap)) var(--cut-mark-length),
-        var(--cut-mark-length) calc(var(--cell-h) + var(--grid-gap)),
-        var(--cut-mark-length) calc(var(--cell-h) + var(--grid-gap));
-      background-position:
-        0 0,
-        0 calc(100% - var(--cut-mark-length)),
-        0 0,
-        calc(100% - var(--cut-mark-length)) 0;
-      background-repeat: repeat-x, repeat-x, repeat-y, repeat-y;
-      opacity: 0;
       z-index: 3;
+      opacity: 0;
+      transition: opacity .15s ease-in-out;
     }
-    body.show-cuts .grid.cut-marks::after { opacity: 1; }
+    .grid.cut-marks .cut-marks-layer,
+    body.show-cuts .grid.cut-marks .cut-marks-layer { opacity: 1; }
+    .cut-marks-layer .cut-mark {
+      position: absolute;
+      background: var(--cut-mark-color);
+      border-radius: 999px;
+    }
+    .cut-marks-layer .cut-mark.vertical {
+      width: var(--cut-mark-thickness);
+      height: var(--cut-mark-length);
+    }
+    .cut-marks-layer .cut-mark.horizontal {
+      height: var(--cut-mark-thickness);
+      width: var(--cut-mark-length);
+    }
     body.show-cuts .cell { border-color: transparent !important; }
 
     .cell { width: var(--cell-w); height: var(--cell-h); border: 0.5pt dashed var(--guide-color); background: #f9fafb; position: relative; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; contain: layout paint size; }
@@ -320,6 +302,7 @@
       background:#1f2937; color:#e5e7eb; border-color:#374151;
     }
     :root[data-theme="dark"] button.danger { background:#b91c1c; border-color:#7f1d1d; }
+    :root[data-theme="dark"] { --cut-mark-color: rgba(226, 232, 240, 0.9); }
     :root[data-theme="dark"] .cell { background:#0b1220; }
     :root[data-theme="dark"] .cell .placeholder { color:#94a3b8; }
     :root[data-theme="dark"] .page { background:var(--page-bg); }
@@ -1274,6 +1257,44 @@
     var currentPage = 0;
     let ctxTarget = null;
 
+    function buildCutMarksLayer(layer){
+      if (!layer) return;
+      layer.innerHTML = '';
+
+      function makeMark(className, styles){
+        var mark = document.createElement('div');
+        mark.className = 'cut-mark ' + className;
+        Object.keys(styles).forEach(function(key){
+          mark.style[key] = styles[key];
+        });
+        layer.appendChild(mark);
+      }
+
+      for (var c = 0; c <= cols; c++){
+        var leftPos = 'calc((var(--cell-w) + var(--grid-gap)) * ' + c + ' - (var(--cut-mark-thickness) / 2))';
+        makeMark('vertical cut-mark-top', {
+          left: leftPos,
+          top: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+        });
+        makeMark('vertical cut-mark-bottom', {
+          left: leftPos,
+          bottom: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+        });
+      }
+
+      for (var r = 0; r <= rows; r++){
+        var topPos = 'calc((var(--cell-h) + var(--grid-gap)) * ' + r + ' - (var(--cut-mark-thickness) / 2))';
+        makeMark('horizontal cut-mark-left', {
+          top: topPos,
+          left: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+        });
+        makeMark('horizontal cut-mark-right', {
+          top: topPos,
+          right: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+        });
+      }
+    }
+
     function createPage(){
       var p = document.createElement('div'); p.className = 'page'; p.setAttribute('role','region'); p.setAttribute('aria-label','Printable page');
       var grid = document.createElement('div'); grid.className = 'grid'; grid.setAttribute('role','grid'); grid.setAttribute('aria-label','9 image grid');
@@ -1285,10 +1306,15 @@
         var ph = document.createElement('div'); ph.className = 'placeholder'; ph.textContent = 'Cell ' + (i+1); cell.appendChild(ph);
         grid.appendChild(cell); cells.push(cell);
       }
+      var cutLayer = document.createElement('div');
+      cutLayer.className = 'cut-marks-layer';
+      cutLayer.setAttribute('aria-hidden', 'true');
+      buildCutMarksLayer(cutLayer);
+      grid.appendChild(cutLayer);
       p.appendChild(grid);
       pageWrap.appendChild(p);
 
-      var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells };
+      var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, cutMarksLayer: cutLayer };
       wireGridEvents(model);
       applyCutMarksToModel(model, !!(toggleCutMarks && toggleCutMarks.checked));
       return model;
@@ -1773,6 +1799,9 @@
 
     function applyCutMarksToModel(model, show){
       if (!model || !model.gridEl) return;
+      if (model.cutMarksLayer && !model.cutMarksLayer.childElementCount){
+        buildCutMarksLayer(model.cutMarksLayer);
+      }
       model.gridEl.classList.toggle('cut-marks', show);
     }
 
