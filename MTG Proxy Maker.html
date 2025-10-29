@@ -1261,6 +1261,10 @@
 
     function buildCutMarksLayer(layer){
       if (!layer) return;
+
+      const grid = layer.parentElement || layer.closest('.grid');
+      if (!grid) return;
+
       layer.innerHTML = '';
 
       function makeMark(className, styles){
@@ -1272,33 +1276,123 @@
         layer.appendChild(mark);
       }
 
-      for (var c = 0; c <= cols; c++){
-        var leftPos = 'calc((var(--cell-w) + var(--grid-gap)) * ' + c + ')';
+      function buildFromCssFallback(){
+        for (var c = 0; c <= cols; c++){
+          var gapCount = (c === cols) ? Math.max(0, cols - 1) : c;
+          var leftPos = 'calc((var(--cell-w) * ' + c + ') + (var(--grid-gap) * ' + gapCount + '))';
+          makeMark('vertical cut-mark-top', {
+            left: leftPos,
+            top: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+            transform: 'translate(-50%, 0)'
+          });
+          makeMark('vertical cut-mark-bottom', {
+            left: leftPos,
+            bottom: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+            transform: 'translate(-50%, 0)'
+          });
+        }
+
+        for (var r = 0; r <= rows; r++){
+          var gapCountR = (r === rows) ? Math.max(0, rows - 1) : r;
+          var topPos = 'calc((var(--cell-h) * ' + r + ') + (var(--grid-gap) * ' + gapCountR + '))';
+          makeMark('horizontal cut-mark-left', {
+            top: topPos,
+            left: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+            transform: 'translate(0, -50%)'
+          });
+          makeMark('horizontal cut-mark-right', {
+            top: topPos,
+            right: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+            transform: 'translate(0, -50%)'
+          });
+        }
+      }
+
+      const gridRect = grid.getBoundingClientRect();
+      const hasLayout = (gridRect.width > 0 && gridRect.height > 0);
+      if (!hasLayout){
+        buildFromCssFallback();
+        return;
+      }
+
+      const layoutWidth = grid.offsetWidth || gridRect.width;
+      const layoutHeight = grid.offsetHeight || gridRect.height;
+      const scaleX = layoutWidth ? (gridRect.width / layoutWidth) : 1;
+      const scaleY = layoutHeight ? (gridRect.height / layoutHeight) : 1;
+      const safeScaleX = scaleX || 1;
+      const safeScaleY = scaleY || 1;
+
+      const cells = Array.from(grid.querySelectorAll('.cell'));
+      if (!cells.length) return;
+
+      const topRow = cells.slice(0, cols);
+      const firstCol = cells.filter(function(_, index){ return index % cols === 0; }).slice(0, rows);
+
+      function toSortedStops(set){
+        const sorted = Array.from(set).sort(function(a,b){ return a-b; });
+        const deduped = [];
+        const EPS = 1e-4;
+        sorted.forEach(function(value){
+          if (!deduped.length || Math.abs(value - deduped[deduped.length - 1]) > EPS){
+            deduped.push(value);
+          }
+        });
+        return deduped;
+      }
+
+      function formatPx(value){
+        var str = value.toFixed(4).replace(/\.?0+$/,'');
+        if (!str) str = '0';
+        return str + 'px';
+      }
+
+      const verticalStopSet = new Set();
+      topRow.forEach(function(cell){
+        const rect = cell.getBoundingClientRect();
+        verticalStopSet.add((rect.left - gridRect.left) / safeScaleX);
+      });
+      if (topRow.length){
+        const lastRect = topRow[topRow.length - 1].getBoundingClientRect();
+        verticalStopSet.add((lastRect.right - gridRect.left) / safeScaleX);
+      }
+      const verticalStops = toSortedStops(verticalStopSet);
+
+      const horizontalStopSet = new Set();
+      firstCol.forEach(function(cell){
+        const rect = cell.getBoundingClientRect();
+        horizontalStopSet.add((rect.top - gridRect.top) / safeScaleY);
+      });
+      if (firstCol.length){
+        const lastRect = firstCol[firstCol.length - 1].getBoundingClientRect();
+        horizontalStopSet.add((lastRect.bottom - gridRect.top) / safeScaleY);
+      }
+      const horizontalStops = toSortedStops(horizontalStopSet);
+
+      verticalStops.forEach(function(leftPos){
         makeMark('vertical cut-mark-top', {
-          left: leftPos,
+          left: formatPx(leftPos),
           top: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
           transform: 'translate(-50%, 0)'
         });
         makeMark('vertical cut-mark-bottom', {
-          left: leftPos,
+          left: formatPx(leftPos),
           bottom: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
           transform: 'translate(-50%, 0)'
         });
-      }
+      });
 
-      for (var r = 0; r <= rows; r++){
-        var topPos = 'calc((var(--cell-h) + var(--grid-gap)) * ' + r + ')';
+      horizontalStops.forEach(function(topPos){
         makeMark('horizontal cut-mark-left', {
-          top: topPos,
+          top: formatPx(topPos),
           left: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
           transform: 'translate(0, -50%)'
         });
         makeMark('horizontal cut-mark-right', {
-          top: topPos,
+          top: formatPx(topPos),
           right: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
           transform: 'translate(0, -50%)'
         });
-      }
+      });
     }
 
     function createPage(){
@@ -1315,10 +1409,10 @@
       var cutLayer = document.createElement('div');
       cutLayer.className = 'cut-marks-layer';
       cutLayer.setAttribute('aria-hidden', 'true');
-      buildCutMarksLayer(cutLayer);
       grid.appendChild(cutLayer);
       p.appendChild(grid);
       pageWrap.appendChild(p);
+      buildCutMarksLayer(cutLayer);
 
       var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, cutMarksLayer: cutLayer };
       wireGridEvents(model);
@@ -1806,7 +1900,7 @@
 
     function applyCutMarksToModel(model, show){
       if (!model || !model.gridEl) return;
-      if (model.cutMarksLayer && !model.cutMarksLayer.childElementCount){
+      if (model.cutMarksLayer){
         buildCutMarksLayer(model.cutMarksLayer);
       }
       model.gridEl.classList.toggle('cut-marks', show);
