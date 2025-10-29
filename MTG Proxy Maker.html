@@ -1273,26 +1273,30 @@
       }
 
       for (var c = 0; c <= cols; c++){
-        var leftPos = 'calc((var(--cell-w) + var(--grid-gap)) * ' + c + ' - (var(--cut-mark-thickness) / 2))';
+        var leftPos = 'calc((var(--cell-w) + var(--grid-gap)) * ' + c + ')';
         makeMark('vertical cut-mark-top', {
           left: leftPos,
-          top: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+          top: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+          transform: 'translate(-50%, 0)'
         });
         makeMark('vertical cut-mark-bottom', {
           left: leftPos,
-          bottom: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+          bottom: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+          transform: 'translate(-50%, 0)'
         });
       }
 
       for (var r = 0; r <= rows; r++){
-        var topPos = 'calc((var(--cell-h) + var(--grid-gap)) * ' + r + ' - (var(--cut-mark-thickness) / 2))';
+        var topPos = 'calc((var(--cell-h) + var(--grid-gap)) * ' + r + ')';
         makeMark('horizontal cut-mark-left', {
           top: topPos,
-          left: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+          left: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+          transform: 'translate(0, -50%)'
         });
         makeMark('horizontal cut-mark-right', {
           top: topPos,
-          right: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))'
+          right: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
+          transform: 'translate(0, -50%)'
         });
       }
     }
