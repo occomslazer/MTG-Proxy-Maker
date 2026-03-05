@@ -1597,10 +1597,9 @@
     }
 
     function moveGhostTo(x,y, ghost){
-      const w = ghost.getBoundingClientRect().width;
-      const h = ghost.getBoundingClientRect().height;
-      ghost.style.left = (x - w/2) + 'px';
-      ghost.style.top  = (y - h/2) + 'px';
+      const { width, height } = ghost.getBoundingClientRect();
+      ghost.style.left = (x - width/2) + 'px';
+      ghost.style.top  = (y - height/2) + 'px';
     }
 
     function onPointerDownCell(e, model, idx){
@@ -1821,7 +1820,7 @@
         if (item.resolvedSrc){
           return item.resolvedSrc;
         }
-        const url = await imageStore.getUrl(item.key, item.mime || null);
+        const url = await imageStore.getUrl(item.key);
         if (url){
           item.resolvedSrc = url;
           return url;
@@ -2063,7 +2062,6 @@
             const f = (typeof it.getAsFile === 'function') ? it.getAsFile() : null;
             if(f) addFile(f, it.type || f.type || '');
           });
-          console.log('Unique images detected on paste:', files.length);
           return files;
         }
         // No image items? fall back to cd.files below.
@@ -2075,7 +2073,6 @@
         });
       }
 
-      console.log('Unique images detected on paste:', files.length);
       return files;
     }
 
@@ -2720,9 +2717,8 @@
         if (e.key==='ArrowUp' && i-cols>=0) j=i-cols;
         if (e.key==='ArrowDown' && i+cols<CELLS_PER_PAGE) j=i+cols;
         if (j!==i){
-          handleInternalDrop(m, i, m, j);
+          handleInternalDrop(m, i, m, j); // saveState() is called inside handleInternalDrop
           m.cells[j].focus();
-          saveState();
           e.preventDefault();
         }
       }
@@ -2934,24 +2930,28 @@
           }
           continue;
         }
-        let di = 0;
-        for (let j=0;j<chunk.length;j++){
-          const req = chunk[j];
-          const card = di < data.data.length ? data.data[di] : null;
+        // Build lookup map from returned cards keyed by normalized name+set
+        const cardMap = new Map();
+        for (const card of data.data){
+          const n = (card.name || card.printed_name || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+          const s = (card.set || '').toLowerCase();
+          const key = n + '||' + s;
+          if (!cardMap.has(key)) cardMap.set(key, card);
+          // Also store by name-only for requests without a set
+          if (!cardMap.has(n)) cardMap.set(n, card);
+        }
+        for (const req of chunk){
           const wantName = (req.identifier.name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
           const wantSet = req.identifier.set ? req.identifier.set.toLowerCase() : null;
+          const lookupKey = wantSet ? (wantName + '||' + wantSet) : wantName;
+          const card = cardMap.get(lookupKey);
           let matched = false;
           if (card){
-            const gotName = (card.name || card.printed_name || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-            const gotSet  = (card.set || '').toLowerCase();
-            if (gotName === wantName && (!wantSet || gotSet === wantSet)) {
-              const images = makeCardImages(card);
-              if (images.front){
-                results.set(req.original, images);
-                scryCache.set(req.original.toLowerCase(), images);
-                matched = true;
-                di++;
-              }
+            const images = makeCardImages(card);
+            if (images.front){
+              results.set(req.original, images);
+              scryCache.set(req.original.toLowerCase(), images);
+              matched = true;
             }
           }
           if (!matched){
@@ -3246,6 +3246,9 @@
           if (tuneScaleLock){
             tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
           }
+          if (fitModeSelect && t.fitMode){
+            fitModeSelect.value = t.fitMode;
+          }
         }
       }catch(_){}
     }
@@ -3300,10 +3303,11 @@
           h
         );
 
-        // Persist scaleLock merged with other tuning
+        // Persist scaleLock and fitMode merged with other tuning
         try{
           const prev = JSON.parse(localStorage.getItem('mtgTuning') || '{}');
           prev.scaleLock = !!(tuneScaleLock && tuneScaleLock.checked);
+          prev.fitMode = fitModeSelect ? fitModeSelect.value : 'cover';
           localStorage.setItem('mtgTuning', JSON.stringify(prev));
         }catch(_){}
 
