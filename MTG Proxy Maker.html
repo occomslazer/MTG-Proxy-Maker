@@ -776,7 +776,8 @@
           try{ return pathToFileURL(fullPath).toString(); }catch(_){ }
         }
         const normalized = fullPath.replace(/\\/g, '/');
-        return 'file://' + (normalized.startsWith('/') ? normalized : '/' + normalized);
+        const encoded = normalized.split('/').map(encodeURIComponent).join('/');
+        return 'file://' + (encoded.startsWith('/') ? encoded : '/' + encoded);
       }
 
       function guessExt(mime){
@@ -1215,6 +1216,7 @@
     function refreshPxPerIn(){ var v = measurePxPerIn(); if(Math.abs(v - PX_PER_IN) > 0.5){ PX_PER_IN = v; return true; } return false; }
 
     function computeFitDims(nw, nh, cw, ch, fit){
+      if (!nw || !nh) return { w: cw, h: ch };
       var cellAR = cw / ch; var imgAR = nw / nh; var w, h;
       if(fit === 'cover'){ if(imgAR > cellAR){ h = ch; w = ch * imgAR; } else { w = cw; h = cw / imgAR; } }
       else { if(imgAR > cellAR){ w = cw; h = cw / imgAR; } else { h = ch; w = ch * imgAR; } }
@@ -1238,10 +1240,10 @@
     function readCssInches(){
       const cs = getComputedStyle(document.documentElement);
       const px = getPxPerIn();
-      const pageW = parseFloat(cs.getPropertyValue('--page-w')) * px;
-      const pageH = parseFloat(cs.getPropertyValue('--page-h')) * px;
-      const cellW = parseFloat(cs.getPropertyValue('--cell-w')) * px;
-      const cellH = parseFloat(cs.getPropertyValue('--cell-h')) * px;
+      const pageW = (parseFloat(cs.getPropertyValue('--page-w')) || 8.5) * px;
+      const pageH = (parseFloat(cs.getPropertyValue('--page-h')) || 11) * px;
+      const cellW = (parseFloat(cs.getPropertyValue('--cell-w')) || 2.475) * px;
+      const cellH = (parseFloat(cs.getPropertyValue('--cell-h')) || 3.465) * px;
       const gap = parseFloat(cs.getPropertyValue('--grid-gap')) * px || 0;
 
       const gridTopIn = parseFloat(cs.getPropertyValue('--grid-top')) || 0;
@@ -2023,7 +2025,6 @@
     function collectImageFilesFromClipboardData(cd){
       const files = [];
       if(!cd){
-        console.log('Unique images detected on paste:', files.length);
         return files;
       }
 
@@ -2123,7 +2124,7 @@
             }
             blob = dataBlob;
           } else {
-            const response = await fetch(src, { mode: 'cors' }).catch(function(err){ throw err; });
+            const response = await fetch(src, { mode: 'cors' });
             if (!response || !response.ok){
               throw new Error('Unable to fetch image data');
             }
@@ -2302,21 +2303,16 @@
 
     const IMAGE_FILE_BATCH_SIZE = 16;
 
+    function yieldToEventLoop(scheduler){
+      return new Promise(function(r){ scheduler === setTimeout ? scheduler(r, 0) : scheduler(r, { timeout: 0 }); });
+    }
+
     function readFileAsDataURL(file){
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
         reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
         reader.readAsDataURL(file);
-      });
-    }
-
-    function ensureImageLoaded(src){
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error('Image failed to load.'));
-        img.src = src;
       });
     }
 
@@ -2342,14 +2338,14 @@
             }
             const dataUrl = await dataPromise;
             if(!decodedWithBitmap){
-              await ensureImageLoaded(dataUrl);
+              await waitForImageLoad(dataUrl);
             }
             await handler(file, dataUrl);
           }catch(err){
             console.error('Failed to process image file', err);
           }
         }
-        await new Promise(r => idleScheduler === setTimeout ? idleScheduler(r, 0) : idleScheduler(r, { timeout: 0 }));
+        await yieldToEventLoop(idleScheduler);
       }
     }
 
@@ -2647,6 +2643,7 @@
 
       if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key) && !e.altKey && !e.ctrlKey && !e.metaKey){
         const m = getCurrent();
+        if (!m) return;
         const cell = document.activeElement?.closest?.('.cell') || m.cells[0];
         const i = Number(cell.dataset.index || 0);
         let j = i;
@@ -2701,6 +2698,7 @@
         if(cell){
           const idx = Number(cell.dataset.index);
           const m = getCurrent();
+          if (!m) return;
           if (m.items[idx]){
             discardItem(m.items[idx]);
             m.items[idx] = null;
@@ -2717,6 +2715,7 @@
         if(!cell) return;
         const i = Number(cell.dataset.index);
         const m = getCurrent();
+        if (!m) return;
         let j = i;
         if (e.key==='ArrowLeft' && (i%cols)>0) j=i-1;
         if (e.key==='ArrowRight' && (i%cols)<cols-1) j=i+1;
@@ -2732,7 +2731,7 @@
 
       if(/^([1-9])$/.test(e.key)){
         const n = parseInt(e.key,10)-1;
-        const cell = getCurrent().cells[n]; if(cell){ cell.focus(); }
+        const m = getCurrent(); if(m){ const cell = m.cells[n]; if(cell){ cell.focus(); } }
         return;
       }
     });
@@ -2928,7 +2927,7 @@
             body: JSON.stringify({ identifiers: chunk.map(x=>x.identifier) })
           });
           if (r.ok) data = await r.json();
-        }catch(_){}
+        }catch(e){ console.warn('Scryfall collection fetch failed', e); }
         if (!data || !Array.isArray(data.data)) {
           for (const item of chunk){
             try{
@@ -2937,14 +2936,14 @@
                 results.set(item.original, images);
                 scryCache.set(item.original.toLowerCase(), images);
               }
-            }catch(_){}
+            }catch(e){ console.warn('Scryfall fallback fetch failed for', item.original, e); }
           }
           continue;
         }
         let di = 0;
         for (let j=0;j<chunk.length;j++){
           const req = chunk[j];
-          const card = data.data[di];
+          const card = di < data.data.length ? data.data[di] : null;
           const wantName = (req.identifier.name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
           const wantSet = req.identifier.set ? req.identifier.set.toLowerCase() : null;
           let matched = false;
@@ -2968,7 +2967,7 @@
                 results.set(req.original, images);
                 scryCache.set(req.original.toLowerCase(), images);
               }
-            }catch(_){}
+            }catch(e){ console.warn('Scryfall fallback fetch failed for', req.original, e); }
           }
         }
       }
@@ -3000,7 +2999,7 @@
         setStatus(`(${++placed}/${names.length}) ${n}`);
         if (batchCount >= 16){
           batchCount = 0;
-          await new Promise(r => pause === setTimeout ? pause(r, 0) : pause(r, { timeout: 0 }));
+          await yieldToEventLoop(pause);
         }
       }
       setStatus(missing ? `Done — ${missing} not found` : 'Done');
@@ -3390,7 +3389,7 @@
       if (!model || !model.items[index]) return false;
       const offsets = { up: -cols, down: cols, left: -1, right: 1 };
       const delta = offsets[direction];
-      if (!delta && delta !== 0) return false;
+      if (delta === undefined) return false;
       if (direction === 'left' && (index % cols) === 0) return false;
       if (direction === 'right' && (index % cols) === cols - 1) return false;
       if (direction === 'up' && index - cols < 0) return false;
