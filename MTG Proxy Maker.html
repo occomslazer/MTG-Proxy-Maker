@@ -4,6 +4,9 @@
   <meta charset="utf-8" />
   <title>MTG Proxy Maker</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#111827" />
+  <meta name="description" content="Create and print MTG proxy cards from Scryfall images" />
+  <link rel="manifest" href="manifest.json" />
   <style>
     :root{
       --cell-w: 2.4750in; /* default card width */
@@ -108,6 +111,105 @@
     .cell .placeholder{ color: #9ca3af; font-size: 12px; text-align: center; padding: 8px; user-select: none; }
 
     .cell:focus { outline: none; }
+    .cell:focus-visible::after{
+      opacity:1;
+      box-shadow:
+        inset 0 0 0 3px #ffffff,
+        inset 0 0 0 6px #2563eb;
+    }
+    .cell.clipboard-cut { opacity: .45; border: 2px dashed #f59e0b !important; }
+    .cell.clipboard-copy { box-shadow: inset 0 0 0 3px rgba(59,130,246,.5); }
+
+    button:focus-visible, label.button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+      outline: 2px solid #2563eb;
+      outline-offset: 2px;
+    }
+
+    .skip-link {
+      position: absolute;
+      left: -9999px;
+      top: auto;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      z-index: 100;
+      background: #111827;
+      color: white;
+      padding: 8px 16px;
+      border-radius: 0 0 8px 0;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .skip-link:focus {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: auto;
+      height: auto;
+    }
+
+    .offline-banner {
+      display: none;
+      background: #fef3c7;
+      color: #92400e;
+      text-align: center;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-bottom: 1px solid #fbbf24;
+    }
+    .offline-banner.show { display: block; }
+    :root[data-theme="dark"] .offline-banner { background: #451a03; color: #fcd34d; border-bottom-color: #92400e; }
+    @media print { .offline-banner { display: none !important; } }
+
+    /* ===== Print Preview Mode ===== */
+    .preview-mode header,
+    .preview-mode .controls { display: none !important; }
+    .preview-mode main {
+      overflow: auto !important;
+      align-items: flex-start !important;
+      padding: 20px 0;
+    }
+    .preview-mode .page-wrap {
+      width: auto !important;
+      height: auto !important;
+      margin: 0 auto !important;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 40px;
+      max-height: none;
+    }
+    .preview-mode .page {
+      display: block !important;
+      position: static !important;
+      box-shadow: 0 4px 24px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06);
+      transform: none !important;
+      flex-shrink: 0;
+    }
+    .preview-mode .page:not(.current) { display: block !important; }
+    .preview-mode .cell { border-color: transparent !important; }
+    .preview-mode .cell .placeholder { display: none !important; }
+    .preview-mode .cell::after { display: none !important; }
+
+    .preview-exit-bar {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: #111827;
+      color: white;
+      padding: 10px 20px;
+      z-index: 100;
+      text-align: center;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+    .preview-mode .preview-exit-bar { display: flex; align-items: center; justify-content: center; gap: 16px; }
+    :root[data-theme="dark"] .preview-exit-bar { background: #1e293b; }
     .cell::after{
       content:""; position:absolute; inset:0; border-radius: 8px;
       pointer-events:none; z-index:5; opacity:0; transition:opacity .12s ease-in-out;
@@ -317,6 +419,13 @@
   </style>
 </head>
 <body>
+  <a href="#pageWrap" class="skip-link">Skip to content</a>
+  <div id="offlineBanner" class="offline-banner" role="alert">You are offline. Previously fetched cards are still available, but new searches require an internet connection.</div>
+  <div class="preview-exit-bar" id="previewExitBar">
+    <span>Print Preview — showing all pages as they will appear on paper</span>
+    <button id="exitPreviewBtn" class="secondary" style="margin-left:12px;">Exit Preview</button>
+    <button id="previewPrintBtn" style="margin-left:4px;">Print</button>
+  </div>
   <div class="app">
     <header>
       <div class="bar">
@@ -334,8 +443,14 @@
           Add Images
           <input id="fileInput" type="file" accept="image/*" multiple style="display:none" />
         </label>
+        <button id="exportBtn" class="secondary screen-only" title="Export deck layout">Export</button>
+        <label class="button secondary screen-only" title="Import deck layout">
+          Import
+          <input id="importFileInput" type="file" accept=".mtgproxy,.json" style="display:none" />
+        </label>
         <button id="clearBtn" class="secondary screen-only" title="Clear current page (Ctrl/⌘+Delete/Backspace)">Clear</button>
         <button id="clearAllBtn" class="danger screen-only" title="Clear ALL pages (Ctrl/⌘+Shift+Delete/Backspace)">Clear All</button>
+        <button id="previewBtn" class="secondary screen-only" title="Print preview">Preview</button>
         <button id="printBtn" title="Open print dialog (P)">Print</button>
       </div>
     </header>
@@ -367,6 +482,9 @@
       <div id="pageWrap" class="page-wrap"></div>
     </main>
   </div>
+
+  <!-- Export modal injected dynamically -->
+  <div id="exportModalRoot"></div>
 
   <!-- Decklist modal injected dynamically -->
   <div id="deckModalRoot"></div>
@@ -1033,6 +1151,9 @@
         `<li><b>${modKey}+Shift+Delete/Backspace</b> – Clear ALL pages</li>`,
         '<li><b>Alt+Arrows</b> – Reorder focused cell</li>',
         '<li><b>D + Drag</b> – Duplicate dragged card to target cell (keeps original)</li>',
+        '<li><b>C</b> – Copy focused cell (internal clipboard)</li>',
+        '<li><b>X</b> – Cut focused cell (internal clipboard)</li>',
+        '<li><b>V</b> – Paste into focused cell (from internal clipboard)</li>',
         '<li><b>Delete/Backspace</b> – Clear focused cell</li>',
         clipboardHotkeys.join(''),
         '<li><b>1–9</b> – Focus a cell</li>',
@@ -1041,7 +1162,7 @@
         '<li><b>G</b> – Toggle guides</li>',
         '<li><b>M</b> – Toggle cut marks</li>',
         '<li><b>?</b> or <b>H</b> or <b>F1</b> – Open this help</li>',
-        '<li><b>Esc</b> – Close any open dialog</li>'
+        '<li><b>Esc</b> – Close any open dialog / cancel cut/copy</li>'
       ];
 
       const howItWorksItems = [
@@ -2614,6 +2735,76 @@
     const ro = new ResizeObserver(()=>debouncedUpdate());
     ro.observe(document.documentElement);
 
+    /* ===== Internal clipboard (C / X / V) for keyboard card moving ===== */
+    let internalClipboard = null; // { mode: 'cut'|'copy', pageIndex, cellIndex, item }
+
+    function clearInternalClipboard(){
+      if (!internalClipboard) return;
+      const prev = internalClipboard;
+      internalClipboard = null;
+      // Remove visual indicators from source cell
+      const srcModel = pages[prev.pageIndex];
+      if (srcModel && srcModel.cells[prev.cellIndex]){
+        srcModel.cells[prev.cellIndex].classList.remove('clipboard-cut', 'clipboard-copy');
+      }
+    }
+
+    function internalCut(model, index){
+      clearInternalClipboard();
+      const item = model.items[index];
+      if (!item){ setStatus('Cell is empty'); return; }
+      const pageIndex = pages.indexOf(model);
+      if (pageIndex === -1) return;
+      internalClipboard = { mode: 'cut', pageIndex: pageIndex, cellIndex: index, item: item };
+      model.cells[index].classList.add('clipboard-cut');
+      setStatus('Cut cell ' + (index + 1));
+    }
+
+    function internalCopy(model, index){
+      clearInternalClipboard();
+      const item = model.items[index];
+      if (!item){ setStatus('Cell is empty'); return; }
+      const pageIndex = pages.indexOf(model);
+      if (pageIndex === -1) return;
+      internalClipboard = { mode: 'copy', pageIndex: pageIndex, cellIndex: index, item: item };
+      model.cells[index].classList.add('clipboard-copy');
+      setStatus('Copied cell ' + (index + 1));
+    }
+
+    async function internalPaste(dstModel, dstIndex){
+      if (!internalClipboard){
+        setStatus('Nothing to paste');
+        return;
+      }
+      const clip = internalClipboard;
+      const srcModel = pages[clip.pageIndex];
+      if (!srcModel){ clearInternalClipboard(); return; }
+
+      if (clip.mode === 'cut'){
+        // Move: swap or place
+        clearInternalClipboard();
+        handleInternalDrop(srcModel, clip.cellIndex, dstModel, dstIndex);
+        setStatus('Moved to cell ' + (dstIndex + 1));
+      } else {
+        // Copy: duplicate
+        clearInternalClipboard();
+        try {
+          const clone = await cloneItem(clip.item);
+          if (clone){
+            const prev = dstModel.items[dstIndex];
+            if (prev && prev !== clone){ discardItem(prev); }
+            dstModel.items[dstIndex] = clone;
+            renderCell(dstModel, dstIndex);
+            saveState();
+            setStatus('Pasted copy to cell ' + (dstIndex + 1));
+          }
+        } catch(err){
+          console.error('Failed to paste copy', err);
+          setStatus('Failed to paste');
+        }
+      }
+    }
+
     /* ===== Keyboard A11y & Hotkeys ===== */
     document.addEventListener('keydown', function(e){
       const tag = (e.target && e.target.tagName) || '';
@@ -2732,6 +2923,49 @@
           m.cells[j].focus();
           e.preventDefault();
         }
+      }
+
+      // Internal clipboard: C to copy, X to cut, V to paste (no modifier keys)
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey){
+        if (e.key === 'x' || e.key === 'X'){
+          const cell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
+          if (cell){
+            const resolved = resolveModelFromCellEl(cell);
+            if (resolved && resolved.model){
+              e.preventDefault();
+              internalCut(resolved.model, resolved.index);
+              return;
+            }
+          }
+        }
+        if (e.key === 'c' && !e.ctrlKey && !e.metaKey){
+          const cell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
+          if (cell){
+            const resolved = resolveModelFromCellEl(cell);
+            if (resolved && resolved.model){
+              e.preventDefault();
+              internalCopy(resolved.model, resolved.index);
+              return;
+            }
+          }
+        }
+        if (e.key === 'v' || e.key === 'V'){
+          const cell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
+          if (cell && internalClipboard){
+            const resolved = resolveModelFromCellEl(cell);
+            if (resolved && resolved.model){
+              e.preventDefault();
+              internalPaste(resolved.model, resolved.index);
+              return;
+            }
+          }
+        }
+      }
+
+      // Escape clears internal clipboard
+      if (e.key === 'Escape' && internalClipboard){
+        clearInternalClipboard();
+        setStatus('Cancelled');
       }
 
       if(/^([1-9])$/.test(e.key)){
@@ -3088,6 +3322,245 @@
     addDFCBacksBtn.addEventListener('click', function(){
       addMissingDFCBacks();
     });
+
+    /* ===== Export / Import ===== */
+    var exportBtn = document.getElementById('exportBtn');
+    var importFileInput = document.getElementById('importFileInput');
+    var exportModalRoot = document.getElementById('exportModalRoot');
+    var exportModal = null;
+
+    function ensureExportModal(){
+      if (exportModal) return exportModal;
+      const tpl = document.createElement('template');
+      tpl.innerHTML = `
+        <div id="exportModal" class="modal">
+          <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="exportTitle">
+            <h2 id="exportTitle">Export Deck Layout</h2>
+            <p style="margin:0;color:#6b7280;font-size:13px">Choose how to export your layout.</p>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <label class="field">
+                <input type="radio" name="exportMode" value="full" checked />
+                <strong>Full export</strong> — includes card images (larger file, works offline)
+              </label>
+              <label class="field">
+                <input type="radio" name="exportMode" value="light" />
+                <strong>Lightweight</strong> — card positions and Scryfall URLs only (small file, re-fetches images on import)
+              </label>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button id="doExportBtn">Export</button>
+              <div class="right"></div>
+              <button id="closeExportBtn" class="secondary">Close</button>
+            </div>
+          </div>
+        </div>`;
+      const modal = tpl.content.firstElementChild;
+      (exportModalRoot || document.body).appendChild(modal);
+      exportModal = modal;
+      setupModalBackdrop(exportModal);
+
+      const closeBtn = exportModal.querySelector('#closeExportBtn');
+      if (closeBtn){
+        closeBtn.addEventListener('click', function(){ closeModal(exportModal); });
+      }
+
+      const doBtn = exportModal.querySelector('#doExportBtn');
+      if (doBtn){
+        doBtn.addEventListener('click', async function(){
+          const modeEl = exportModal.querySelector('input[name="exportMode"]:checked');
+          const mode = modeEl ? modeEl.value : 'full';
+          doBtn.disabled = true;
+          doBtn.textContent = 'Exporting…';
+          try {
+            await performExport(mode);
+            closeModal(exportModal);
+          } catch(err){
+            console.error('Export failed', err);
+            setStatus('Export failed: ' + (err.message || err));
+          } finally {
+            doBtn.disabled = false;
+            doBtn.textContent = 'Export';
+          }
+        });
+      }
+
+      return exportModal;
+    }
+
+    async function performExport(mode){
+      await imageStoreReady;
+      const pagesData = [];
+      const imagesData = {};
+
+      for (let p = 0; p < pages.length; p++){
+        const model = pages[p];
+        const pageItems = [];
+        for (let i = 0; i < CELLS_PER_PAGE; i++){
+          const item = model.items[i];
+          if (!item){
+            pageItems.push(null);
+            continue;
+          }
+          const serialized = serializeItem(item);
+          if (mode === 'full' && item.type === 'stored' && item.key){
+            // Convert blob to base64
+            try {
+              const blob = await imageStore.getBlob(item.key, item.mime || null);
+              const base64 = await blobToBase64(blob);
+              imagesData[item.key] = { mime: blob.type || item.mime || 'image/png', data: base64 };
+            } catch(err){
+              console.warn('Failed to export image for key ' + item.key, err);
+            }
+          }
+          pageItems.push(serialized);
+        }
+        pagesData.push(pageItems);
+      }
+
+      // Read tuning
+      let tuning = null;
+      try {
+        const raw = localStorage.getItem('mtgTuning');
+        if (raw) tuning = JSON.parse(raw);
+      } catch(_){}
+
+      const exportData = {
+        version: 1,
+        mode: mode,
+        pages: pagesData,
+        current: currentPage,
+        tuning: tuning
+      };
+      if (mode === 'full'){
+        exportData.images = imagesData;
+      }
+
+      const json = JSON.stringify(exportData);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'deck-layout-' + new Date().toISOString().slice(0,10) + '.mtgproxy';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatus('Exported deck layout (' + mode + ')');
+    }
+
+    function blobToBase64(blob){
+      return new Promise(function(resolve, reject){
+        const reader = new FileReader();
+        reader.onload = function(){ resolve(reader.result); };
+        reader.onerror = function(){ reject(reader.error || new Error('Failed to read blob')); };
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function performImport(file){
+      setStatus('Importing…');
+      await imageStoreReady;
+
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data || !Array.isArray(data.pages)){
+        throw new Error('Invalid .mtgproxy file');
+      }
+
+      // Clear existing state
+      pages.forEach(disposePageItems);
+      pageWrap.innerHTML = '';
+      pages.length = 0;
+
+      // Restore images if full export
+      if (data.mode === 'full' && data.images){
+        for (const [key, imgData] of Object.entries(data.images)){
+          try {
+            const blob = dataUrlToBlob(imgData.data);
+            if (blob){
+              // Store with the same key — we need to use put directly
+              await imageStore.storeBlob(blob, imgData.mime || null).then(function(stored){
+                // Map old key to new key in page data
+                remapImageKey(data.pages, key, stored.key);
+              });
+            }
+          } catch(err){
+            console.warn('Failed to import image ' + key, err);
+          }
+        }
+      }
+
+      // Rebuild pages
+      for (let i = 0; i < data.pages.length; i++){
+        const m = createPage();
+        pages.push(m);
+        const source = Array.isArray(data.pages[i]) ? data.pages[i] : [];
+        const items = new Array(CELLS_PER_PAGE).fill(null);
+        for (let j = 0; j < CELLS_PER_PAGE; j++){
+          const entry = source[j];
+          if (!entry){ items[j] = null; continue; }
+          try {
+            if (entry.type === 'stored' && entry.key){
+              items[j] = createStoredItemFromKey(entry.key, entry.mime || null);
+            } else if (entry.type === 'url' && entry.url){
+              items[j] = createUrlItem(entry.url);
+            } else {
+              items[j] = null;
+            }
+          } catch(err){
+            console.warn('Failed to restore item', err);
+            items[j] = null;
+          }
+        }
+        m.items = items;
+        renderGrid(m);
+      }
+
+      // Restore tuning if present
+      if (data.tuning){
+        try {
+          localStorage.setItem('mtgTuning', JSON.stringify(data.tuning));
+          loadTuning();
+        } catch(_){}
+      }
+
+      syncCutMarksState();
+      showPage(Math.min(Math.max(0, data.current || 0), pages.length - 1));
+      saveState();
+      setStatus('Imported deck layout (' + (data.pages.length) + ' pages)');
+    }
+
+    function remapImageKey(pagesData, oldKey, newKey){
+      for (const pageItems of pagesData){
+        if (!Array.isArray(pageItems)) continue;
+        for (let i = 0; i < pageItems.length; i++){
+          const item = pageItems[i];
+          if (item && item.type === 'stored' && item.key === oldKey){
+            item.key = newKey;
+          }
+        }
+      }
+    }
+
+    if (exportBtn){
+      exportBtn.addEventListener('click', function(){
+        openModal(ensureExportModal());
+      });
+    }
+
+    if (importFileInput){
+      importFileInput.addEventListener('change', async function(e){
+        const file = e.target.files && e.target.files[0];
+        importFileInput.value = '';
+        if (!file) return;
+        try {
+          await performImport(file);
+        } catch(err){
+          console.error('Import failed', err);
+          setStatus('Import failed: ' + (err.message || err));
+        }
+      });
+    }
 
     /* ===== Status & persistence ===== */
     let statusTimer = null;
@@ -3736,6 +4209,51 @@
       ctxShow(e.clientX, e.clientY, function(root){ buildPageMenu(root); });
     });
 
+    /* ===== Print Preview Mode ===== */
+    var previewBtn = document.getElementById('previewBtn');
+    var exitPreviewBtn = document.getElementById('exitPreviewBtn');
+    var previewPrintBtn = document.getElementById('previewPrintBtn');
+    var previewActive = false;
+
+    function enterPreview(){
+      if (previewActive) return;
+      previewActive = true;
+      ctxHide();
+      document.querySelector('.app').classList.add('preview-mode');
+      // Force all images to re-fit at full size
+      pages.forEach(function(m){ m.gridEl.querySelectorAll('img').forEach(fitImage); });
+      syncCutMarksState();
+    }
+
+    function exitPreview(){
+      if (!previewActive) return;
+      previewActive = false;
+      document.querySelector('.app').classList.remove('preview-mode');
+      showPage(currentPage);
+      doUpdate();
+    }
+
+    if (previewBtn){
+      previewBtn.addEventListener('click', enterPreview);
+    }
+    if (exitPreviewBtn){
+      exitPreviewBtn.addEventListener('click', exitPreview);
+    }
+    if (previewPrintBtn){
+      previewPrintBtn.addEventListener('click', function(){
+        pages.forEach(function(p){ p.pageEl.offsetHeight; });
+        window.print();
+      });
+    }
+
+    // Escape exits preview mode
+    document.addEventListener('keydown', function(e){
+      if (e.key === 'Escape' && previewActive){
+        e.preventDefault();
+        exitPreview();
+      }
+    });
+
     /* ===== Init ===== */
     (async function init(){
       const firstPage = createPage();
@@ -3758,6 +4276,27 @@
 
     // Expose for debugging
     window.__mtgDebug = { pages };
+
+    /* ===== PWA: Service Worker & Offline detection ===== */
+    (function(){
+      var offlineBanner = document.getElementById('offlineBanner');
+      function updateOnlineStatus(){
+        if (offlineBanner){
+          offlineBanner.classList.toggle('show', !navigator.onLine);
+        }
+      }
+      window.addEventListener('online', updateOnlineStatus);
+      window.addEventListener('offline', updateOnlineStatus);
+      updateOnlineStatus();
+
+      if ('serviceWorker' in navigator){
+        navigator.serviceWorker.register('service-worker.js').then(function(reg){
+          console.log('Service worker registered', reg.scope);
+        }).catch(function(err){
+          console.warn('Service worker registration failed', err);
+        });
+      }
+    })();
   </script>
 </body>
 </html>
