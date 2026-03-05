@@ -351,9 +351,7 @@
           <label class="field" title="Draw cut lines at cell borders"><input type="checkbox" id="toggleCutMarks" /> Cut marks</label>
         </div>
         <div class="field">
-          <label class="field" title="Add the reverse face of double-faced cards after the front image">
-            <input id="includeDFCBacksChk" type="checkbox" /> Include DFC back faces
-          </label>
+          <button id="addDFCBacksBtn" class="secondary" title="Scan placed cards and add any missing DFC back faces">Add missing DFC backs</button>
         </div>
         <div class="field">
           <input id="cardSearch" type="text" placeholder="Add card by name (Enter)" style="min-width:240px" />
@@ -458,7 +456,7 @@
     var closeDeckBtn = null;
     var ignoreBasicsChk = null;
     var ignoreSnowChk = null;
-    var includeDFCBacksChk = document.getElementById('includeDFCBacksChk');
+    var addDFCBacksBtn = document.getElementById('addDFCBacksBtn');
     var ctxMenu = document.getElementById('ctxMenu');
 
     /* More refs */
@@ -2861,12 +2859,8 @@
           images = normalizeCardImages(await fetchCardByName(name));
         }
         if(!images || !images.front) throw new Error('No image for: '+name);
-        const includeBacks = !!(includeDFCBacksChk && includeDFCBacksChk.checked);
         scryCache.set(key, images);
         await addImageSrcToNextCell(images.front);
-        if(includeBacks && images.back){
-          await addImageSrcToNextCell(images.back);
-        }
         setStatus('Added');
       } catch(err){ console.error(err); setStatus('Error: '+err.message); }
     }
@@ -2978,7 +2972,6 @@
       const namesAll = parseDecklist(text);
       const ignoreBasics = !!(ignoreBasicsChk && ignoreBasicsChk.checked);
       const ignoreSnow = !!(ignoreSnowChk && ignoreSnowChk.checked);
-      const includeBacks = !!(includeDFCBacksChk && includeDFCBacksChk.checked);
       const names = filterBasics(namesAll, ignoreBasics, ignoreSnow);
       setStatus('Fetching deck images…');
 
@@ -2992,10 +2985,6 @@
         if (!images || !images.front) { console.warn('No image for', n); missing++; continue; }
         await addImageSrcToNextCell(images.front);
         batchCount++;
-        if (includeBacks && images.back){
-          await addImageSrcToNextCell(images.back);
-          batchCount++;
-        }
         setStatus(`(${++placed}/${names.length}) ${n}`);
         if (batchCount >= 16){
           batchCount = 0;
@@ -3009,6 +2998,82 @@
     addCardBtn.addEventListener('click', function(){
       var name=cardSearch.value.trim();
       if(name){ addCardByName(name); cardSearch.select(); }
+    });
+
+    async function addMissingDFCBacks(){
+      // Count all placed URLs across all pages
+      const urlCounts = new Map();
+      for (const page of pages){
+        if (!page || !page.items) continue;
+        for (const item of page.items){
+          if (item && item.type === 'url' && item.url){
+            urlCounts.set(item.url, (urlCounts.get(item.url) || 0) + 1);
+          }
+        }
+      }
+
+      // Find DFCs with missing backs
+      const backsNeeded = []; // {name, backUrl, deficit}
+      for (const [key, raw] of scryCache){
+        const images = normalizeCardImages(raw);
+        if (!images || !images.front || !images.back) continue;
+        const frontCount = urlCounts.get(images.front) || 0;
+        if (frontCount === 0) continue;
+        const backCount = urlCounts.get(images.back) || 0;
+        const deficit = frontCount - backCount;
+        if (deficit > 0){
+          backsNeeded.push({ name: key, backUrl: images.back, deficit: deficit, frontCount: frontCount });
+        }
+      }
+
+      if (backsNeeded.length === 0){
+        setStatus('All DFC back faces are already present');
+        return;
+      }
+
+      // For multi-copy DFCs, ask the user how many backs to add
+      const toAdd = [];
+      for (const entry of backsNeeded){
+        let count = entry.deficit;
+        if (entry.frontCount > 1){
+          const answer = prompt(
+            entry.name + ' has ' + entry.frontCount + ' front copies and ' +
+            (entry.frontCount - entry.deficit) + ' back copies.\n' +
+            'How many back copies would you like to add?',
+            String(entry.deficit)
+          );
+          if (answer === null) continue; // user cancelled
+          const parsed = parseInt(answer, 10);
+          if (isNaN(parsed) || parsed <= 0) continue;
+          count = parsed;
+        }
+        for (let i = 0; i < count; i++){
+          toAdd.push(entry.backUrl);
+        }
+      }
+
+      if (toAdd.length === 0){
+        setStatus('No DFC back faces to add');
+        return;
+      }
+
+      setStatus('Adding ' + toAdd.length + ' DFC back face(s)…');
+      const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
+      let placed = 0;
+      for (const backUrl of toAdd){
+        await addImageSrcToNextCell(backUrl);
+        placed++;
+        setStatus('(' + placed + '/' + toAdd.length + ') Adding DFC backs…');
+        if (placed % 16 === 0){
+          await yieldToEventLoop(pause);
+        }
+      }
+      setStatus('Added ' + toAdd.length + ' DFC back face(s)');
+      showPage(currentPage);
+    }
+
+    addDFCBacksBtn.addEventListener('click', function(){
+      addMissingDFCBacks();
     });
 
     /* ===== Status & persistence ===== */
