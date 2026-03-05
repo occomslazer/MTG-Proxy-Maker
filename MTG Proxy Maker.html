@@ -522,12 +522,15 @@
       });
     }
 
+    const ALLOWED_IMAGE_MIMES = ['image/jpeg','image/png','image/gif','image/webp','image/bmp','image/avif','image/tiff','image/svg+xml'];
+
     function dataUrlToBlob(dataUrl){
       if (typeof dataUrl !== 'string') return null;
       const parts = dataUrl.split(',');
       if (parts.length < 2) return null;
       const match = /^data:([^;]+);base64$/i.exec(parts[0]);
-      const mime = match ? match[1] : 'application/octet-stream';
+      const mime = match ? match[1].toLowerCase() : 'application/octet-stream';
+      if (!ALLOWED_IMAGE_MIMES.includes(mime) && mime !== 'application/octet-stream') return null;
       try{
         const binary = atob(parts[1]);
         const len = binary.length;
@@ -1883,7 +1886,7 @@
         if (data.__renderToken !== token) return;
         discardItem(data);
         model.items[i] = null;
-        renderCell(model, i);
+        if (data !== null) renderCell(model, i);
         saveState();
       });
     }
@@ -2302,8 +2305,14 @@
       return new Promise(function(r){ scheduler === setTimeout ? scheduler(r, 0) : scheduler(r, { timeout: 0 }); });
     }
 
+    const MAX_IMAGE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+
     function readFileAsDataURL(file){
       return new Promise((resolve, reject) => {
+        if (file.size > MAX_IMAGE_FILE_SIZE){
+          reject(new Error('File too large (max 50 MB): ' + file.name));
+          return;
+        }
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
         reader.onerror = () => reject(reader.error || new Error('Failed to read file.'));
@@ -2640,7 +2649,7 @@
         const m = getCurrent();
         if (!m) return;
         const cell = document.activeElement?.closest?.('.cell') || m.cells[0];
-        const i = Number(cell.dataset.index || 0);
+        const i = parseInt(cell.dataset.index, 10) || 0;
         let j = i;
         if (e.key==='ArrowLeft'  && (i%cols)>0) j = i-1;
         if (e.key==='ArrowRight' && (i%cols)<cols-1) j = i+1;
@@ -2691,7 +2700,8 @@
         const el = document.activeElement;
         const cell = el && el.classList && el.classList.contains('cell') ? el : null;
         if(cell){
-          const idx = Number(cell.dataset.index);
+          const idx = parseInt(cell.dataset.index, 10);
+          if (!Number.isFinite(idx) || idx < 0 || idx >= CELLS_PER_PAGE) return;
           const m = getCurrent();
           if (!m) return;
           if (m.items[idx]){
@@ -2708,7 +2718,8 @@
       if(e.altKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
         const cell = document.activeElement?.closest?.('.cell');
         if(!cell) return;
-        const i = Number(cell.dataset.index);
+        const i = parseInt(cell.dataset.index, 10);
+        if (!Number.isFinite(i) || i < 0 || i >= CELLS_PER_PAGE) return;
         const m = getCurrent();
         if (!m) return;
         let j = i;
@@ -2838,7 +2849,7 @@
       var url = set
         ? 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base)+'&set='+encodeURIComponent(set)
         : 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base);
-      var r = await fetch(url); if(!r.ok) throw new Error('Not found: '+name); var data = await r.json();
+      var r = await fetch(url, { signal: AbortSignal.timeout(15000) }); if(!r.ok) throw new Error('Not found: '+name); var data = await r.json();
       const images = makeCardImages(data);
       if(!images.front) throw new Error('No image for: '+name);
       return images;
@@ -2868,7 +2879,7 @@
         if (/^(sideboard|companions?|commander)\s*:?\s*$/i.test(line)) continue;
         const m = line.match(/^(\d+)\s*x?\s+(.+)$/i);
         if (m){
-          const cnt = parseInt(m[1],10);
+          const cnt = Math.min(parseInt(m[1],10), 999);
           const name = m[2].trim();
           for (let j=0;j<cnt;j++) out.push(name);
         } else {
@@ -2908,13 +2919,15 @@
         toFetch.push({ original, identifier: set ? { name, set: set.toLowerCase() } : { name } });
       }
       for (let i=0;i<toFetch.length;i+=75){
+        if (i > 0) await new Promise(function(r){ setTimeout(r, 150); });
         const chunk = toFetch.slice(i, i+75);
         let data = null;
         try{
           const r = await fetch('https://api.scryfall.com/cards/collection', {
             method: 'POST',
             headers: { 'Content-Type':'application/json' },
-            body: JSON.stringify({ identifiers: chunk.map(x=>x.identifier) })
+            body: JSON.stringify({ identifiers: chunk.map(x=>x.identifier) }),
+            signal: AbortSignal.timeout(15000)
           });
           if (r.ok) data = await r.json();
         }catch(e){ console.warn('Scryfall collection fetch failed', e); }
