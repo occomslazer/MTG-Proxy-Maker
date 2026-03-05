@@ -196,7 +196,7 @@
     .preview-exit-bar {
       display: none;
       position: fixed;
-      top: 0;
+      bottom: 0;
       left: 0;
       right: 0;
       background: #111827;
@@ -206,31 +206,9 @@
       text-align: center;
       font-size: 14px;
       font-weight: 600;
-      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+      box-shadow: 0 -2px 8px rgba(0,0,0,.3);
     }
     .preview-mode .preview-exit-bar { display: flex; align-items: center; justify-content: center; gap: 16px; }
-    .preview-close-btn {
-      position: absolute;
-      right: 16px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: transparent;
-      border: 1px solid rgba(255,255,255,.3);
-      color: white;
-      font-size: 22px;
-      line-height: 1;
-      width: 34px;
-      height: 34px;
-      border-radius: 6px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      transition: background .15s, border-color .15s;
-    }
-    .preview-close-btn:hover { background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.5); }
-    .preview-close-btn:active { background: rgba(255,255,255,.25); }
     :root[data-theme="dark"] .preview-exit-bar { background: #1e293b; }
     .cell::after{
       content:""; position:absolute; inset:0; border-radius: 8px;
@@ -448,7 +426,6 @@
       <span>Print Preview — showing all pages as they will appear on paper</span>
       <button id="exitPreviewBtn" class="secondary" style="margin-left:12px;">Exit Preview</button>
       <button id="previewPrintBtn" style="margin-left:4px;">Print</button>
-      <button id="closePreviewBtn" class="preview-close-btn" title="Close preview (Esc)" aria-label="Close preview">&times;</button>
     </div>
     <header>
       <div class="bar">
@@ -4266,10 +4243,6 @@
     }
     if (exitPreviewBtn){
       exitPreviewBtn.addEventListener('click', exitPreview);
-    }
-    var closePreviewBtn = document.getElementById('closePreviewBtn');
-    if (closePreviewBtn){
-      closePreviewBtn.addEventListener('click', exitPreview);
     }
     if (previewPrintBtn){
       previewPrintBtn.addEventListener('click', function(){
