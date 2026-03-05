@@ -443,13 +443,13 @@
 <body>
   <a href="#pageWrap" class="skip-link">Skip to content</a>
   <div id="offlineBanner" class="offline-banner" role="alert">You are offline. Previously fetched cards are still available, but new searches require an internet connection.</div>
-  <div class="preview-exit-bar" id="previewExitBar">
-    <span>Print Preview — showing all pages as they will appear on paper</span>
-    <button id="exitPreviewBtn" class="secondary" style="margin-left:12px;">Exit Preview</button>
-    <button id="previewPrintBtn" style="margin-left:4px;">Print</button>
-    <button id="closePreviewBtn" class="preview-close-btn" title="Close preview (Esc)" aria-label="Close preview">&times;</button>
-  </div>
   <div class="app">
+    <div class="preview-exit-bar" id="previewExitBar">
+      <span>Print Preview — showing all pages as they will appear on paper</span>
+      <button id="exitPreviewBtn" class="secondary" style="margin-left:12px;">Exit Preview</button>
+      <button id="previewPrintBtn" style="margin-left:4px;">Print</button>
+      <button id="closePreviewBtn" class="preview-close-btn" title="Close preview (Esc)" aria-label="Close preview">&times;</button>
+    </div>
     <header>
       <div class="bar">
         <h1>MTG Proxy Maker</h1>
@@ -3342,9 +3342,14 @@
       showPage(currentPage);
     }
 
-    addDFCBacksBtn.addEventListener('click', function(){
-      addMissingDFCBacks();
-    });
+    if (addDFCBacksBtn){
+      addDFCBacksBtn.addEventListener('click', function(){
+        addMissingDFCBacks().catch(function(err){
+          console.error('DFC back faces error:', err);
+          setStatus('Error adding DFC backs: ' + err.message);
+        });
+      });
+    }
 
     /* ===== Export / Import ===== */
     var exportBtn = document.getElementById('exportBtn');
