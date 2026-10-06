@@ -1012,8 +1012,15 @@
       ? imageStore.ready.catch(function(err){ console.error('Image store initialization failed', err); })
       : Promise.resolve();
 
-    function createUrlItem(url){
-      return { type: 'url', url: url };
+    // `card` carries what Scryfall told us about the image: its name and back-face URL (null when
+    // the card has no back). Items without `back` came from other sources or older saves.
+    function createUrlItem(url, card){
+      const item = { type: 'url', url: url };
+      if (card && card.back !== undefined){
+        item.back = card.back || null;
+        item.name = card.name || null;
+      }
+      return item;
     }
 
     function createStoredItemFromKey(key, mime){
@@ -1062,7 +1069,7 @@
         }
       }
       if (item.type === 'url' && item.url){
-        return createUrlItem(item.url);
+        return createUrlItem(item.url, item);
       }
       if (item.url){
         return createUrlItem(item.url);
@@ -1292,7 +1299,6 @@
           try {
             await importDecklist(text);
             closeModal(deckModal);
-            setStatus('Decklist imported');
           } catch (err) {
             console.error(err);
             setStatus('Error importing deck: ' + (err && err.message ? err.message : err));
@@ -3023,9 +3029,7 @@
     var BASIC_BASENAMES = new Set(Array.from(BASE_FIVE).concat(['wastes']));
 
     function normalizeCardName(raw){
-      var s = String(raw).trim();
-      s = s.replace(/\s*(?:\[[^\]]+\]|\([^)]+\))\s*$/,'').trim();
-      return s.toLowerCase();
+      return splitNameAndSet(raw).name.toLowerCase();
     }
     function isBasic(name){ return BASIC_BASENAMES.has(normalizeCardName(name)); }
     function isSnowCoveredBasic(name){
@@ -3051,42 +3055,73 @@
     }
 
     function makeCardImages(card){
-      if(!card) return { front: null, back: null };
+      if(!card) return { front: null, back: null, name: null };
       const faces = Array.isArray(card.card_faces) ? card.card_faces : [];
       const front = pickImageFromUris(card) || pickImageFromUris(faces[0]) || null;
       const back = faces.length > 1 ? (pickImageFromUris(faces[1]) || null) : null;
-      return { front, back };
+      return { front, back, name: card.name || null };
     }
 
     function normalizeCardImages(value){
       if(!value) return null;
-      if(typeof value === 'string') return { front: value, back: null };
-      const front = value.front || null;
-      const back = value.back || null;
-      return { front, back };
+      if(typeof value === 'string') return { front: value, back: null, name: null };
+      const out = { front: value.front || null, back: value.back || null, name: value.name || null };
+      if (value.substituted) out.substituted = true;
+      return out;
     }
+
+    // "Name", "Name [SET]", "Name (SET)", and Arena/Moxfield exports: "Name (SET) 123 *F*"
+    const SET_SUFFIX_RE = /^(.*?)\s*(?:\(([A-Za-z0-9]{2,6})\)|\[([A-Za-z0-9]{2,6})\])(?:\s+([^\s*]+))?(?:\s+\*[A-Za-z]+\*)*\s*$/;
 
     function splitNameAndSet(raw){
       let s = String(raw).trim();
       const qm = s.match(/^(\d+)\s*x?\s+(.+)$/i);
       if (qm) s = qm[2];
-      let set = null, name = s;
-      const m1 = s.match(/\s*\[([A-Za-z0-9]{2,5})\]\s*$/);
-      const m2 = s.match(/\s*\(([A-Za-z0-9]{2,5})\)\s*$/);
-      if (m1){ set = m1[1]; name = s.slice(0, m1.index).trim(); }
-      else if (m2){ set = m2[1]; name = s.slice(0, m2.index).trim(); }
-      return { name, set };
+      const m = s.match(SET_SUFFIX_RE);
+      if (!m || !m[1].trim()) return { name: s, set: null, collectorNumber: null };
+      return { name: m[1].trim(), set: m[2] || m[3], collectorNumber: m[4] || null };
     }
 
+    function foldName(s){
+      return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+    }
+
+    // A multi-face card answers to its full name ("Fire // Ice") and to each face name.
+    function cardNameKeys(card){
+      const keys = [foldName(card.name)];
+      (Array.isArray(card.card_faces) ? card.card_faces : []).forEach(function(f){ keys.push(foldName(f.name)); });
+      return keys;
+    }
+
+    function cardMatchesName(card, name){
+      return cardNameKeys(card).includes(foldName(name));
+    }
+
+    async function fetchScryfallJson(url){
+      const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+      return r.ok ? r.json() : null;
+    }
+
+    // Tries the exact printing first, then the set, then any printing. A collector number that
+    // resolves to a different card (typo, or an Arena-only set code) is not accepted.
     async function fetchCardByName(name){
-      const { name: base, set } = splitNameAndSet(name);
-      var url = set
-        ? 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base)+'&set='+encodeURIComponent(set)
-        : 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base);
-      var r = await fetch(url, { signal: AbortSignal.timeout(15000) }); if(!r.ok) throw new Error('Not found: '+name); var data = await r.json();
-      const images = makeCardImages(data);
-      if(!images.front) throw new Error('No image for: '+name);
-      return images;
+      const { name: base, set, collectorNumber } = splitNameAndSet(name);
+      const named = 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base);
+      const attempts = [];
+      if (set && collectorNumber){
+        attempts.push('https://api.scryfall.com/cards/'+encodeURIComponent(set.toLowerCase())+'/'+encodeURIComponent(collectorNumber));
+      }
+      if (set) attempts.push(named+'&set='+encodeURIComponent(set));
+      attempts.push(named);
+      for (let i = 0; i < attempts.length; i++){
+        const data = await fetchScryfallJson(attempts[i]);
+        if (!data || !cardMatchesName(data, base)) continue;
+        const images = makeCardImages(data);
+        if (!images.front) throw new Error('No image for: '+name);
+        if (i > 0) images.substituted = true;
+        return images;
+      }
+      throw new Error('Not found: '+name);
     }
 
     async function addCardByName(name){
@@ -3101,16 +3136,23 @@
         }
         if(!images || !images.front) throw new Error('No image for: '+name);
         scryCache.set(key, images);
-        await addImageSrcToNextCell(images.front);
-        setStatus('Added');
+        await addImageSrcToNextCell(images.front, images);
+        setStatus(images.substituted ? 'Added (requested printing not found — used another)' : 'Added');
       } catch(err){ console.error(err); setStatus('Error: '+err.message); }
     }
+
+    const DECK_SECTION_RE = /^(deck|main ?deck|sideboard|companions?|commanders?|maybeboard)\s*:?\s*$/i;
 
     function parseDecklist(text){
       const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
       const out = [];
+      let inAbout = false;
       for (let line of lines){
-        if (/^(sideboard|companions?|commander)\s*:?\s*$/i.test(line)) continue;
+        // Arena exports open with "About" followed by "Name <deck name>".
+        if (/^about\s*:?\s*$/i.test(line)){ inAbout = true; continue; }
+        if (inAbout && /^name\s/i.test(line)) continue;
+        inAbout = false;
+        if (DECK_SECTION_RE.test(line)) continue;
         const m = line.match(/^(\d+)\s*x?\s+(.+)$/i);
         if (m){
           const cnt = Math.min(parseInt(m[1],10), 999);
@@ -3123,12 +3165,12 @@
       return out;
     }
 
-    async function addImageSrcToNextCell(src){
+    async function addImageSrcToNextCell(src, card){
       var pos = nextEmptySlot(currentPage) || ensurePageForAppend();
       var m = pages[pos.page];
       if (!m) return;
       try{
-        const item = await createItemFromSrc(src);
+        const item = card ? createUrlItem(src, card) : await createItemFromSrc(src);
         if (!item) return;
         placeImage(m, pos.index, item);
       }catch(err){
@@ -3136,22 +3178,54 @@
       }
     }
 
+    function collectionIdentifier(parsed){
+      if (parsed.set && parsed.collectorNumber){
+        return { set: parsed.set.toLowerCase(), collector_number: parsed.collectorNumber };
+      }
+      // The collection endpoint rejects full multi-face names ("Fire // Ice") but matches any single face.
+      const name = parsed.name.split(' // ')[0].trim();
+      return parsed.set ? { name, set: parsed.set.toLowerCase() } : { name };
+    }
+
+    function indexCollectionCards(cards){
+      const index = new Map();
+      const add = function(key, card){ if (!index.has(key)) index.set(key, card); };
+      for (const card of cards){
+        const set = (card.set || '').toLowerCase();
+        add('#' + set + '#' + String(card.collector_number || '').toLowerCase(), card);
+        cardNameKeys(card).forEach(function(n){
+          add(n + '||' + set, card);
+          add(n, card);
+        });
+      }
+      return index;
+    }
+
+    function findCollectionCard(index, parsed){
+      const set = parsed.set ? parsed.set.toLowerCase() : null;
+      if (set && parsed.collectorNumber){
+        const card = index.get('#' + set + '#' + parsed.collectorNumber.toLowerCase());
+        return card && cardMatchesName(card, parsed.name) ? card : null;
+      }
+      const name = foldName(parsed.name);
+      return index.get(set ? name + '||' + set : name) || null;
+    }
+
     async function fetchManyByName(names){
       const results = new Map();
-      const toFetch = [];
+      const pending = new Map();
       for (const original of names){
+        if (results.has(original) || pending.has(original)) continue;
         const key = original.toLowerCase();
-        if (scryCache.has(key)) {
-          const cached = normalizeCardImages(scryCache.get(key));
-          if (cached && cached.front){
-            scryCache.set(key, cached);
-            results.set(original, cached);
-            continue;
-          }
+        const cached = normalizeCardImages(scryCache.get(key));
+        if (cached && cached.front){
+          results.set(original, cached);
+          continue;
         }
-        const { name, set } = splitNameAndSet(original);
-        toFetch.push({ original, identifier: set ? { name, set: set.toLowerCase() } : { name } });
+        const parsed = splitNameAndSet(original);
+        pending.set(original, { original, parsed, identifier: collectionIdentifier(parsed) });
       }
+      const toFetch = Array.from(pending.values());
       for (let i=0;i<toFetch.length;i+=75){
         if (i > 0) await new Promise(function(r){ setTimeout(r, 150); });
         const chunk = toFetch.slice(i, i+75);
@@ -3177,21 +3251,9 @@
           }
           continue;
         }
-        // Build lookup map from returned cards keyed by normalized name+set
-        const cardMap = new Map();
-        for (const card of data.data){
-          const n = (card.name || card.printed_name || '').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-          const s = (card.set || '').toLowerCase();
-          const key = n + '||' + s;
-          if (!cardMap.has(key)) cardMap.set(key, card);
-          // Also store by name-only for requests without a set
-          if (!cardMap.has(n)) cardMap.set(n, card);
-        }
+        const index = indexCollectionCards(data.data);
         for (const req of chunk){
-          const wantName = (req.identifier.name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
-          const wantSet = req.identifier.set ? req.identifier.set.toLowerCase() : null;
-          const lookupKey = wantSet ? (wantName + '||' + wantSet) : wantName;
-          const card = cardMap.get(lookupKey);
+          const card = findCollectionCard(index, req.parsed);
           let matched = false;
           if (card){
             const images = makeCardImages(card);
@@ -3223,14 +3285,15 @@
       setStatus('Fetching deck images…');
 
       const mapping = await fetchManyByName(names);
-      let placed = 0, missing = 0;
+      let placed = 0, missing = 0, substituted = 0;
       const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
       let batchCount = 0;
       for (const n of names){
         const found = mapping.get(n) || scryCache.get(n.toLowerCase());
         const images = normalizeCardImages(found);
         if (!images || !images.front) { console.warn('No image for', n); missing++; continue; }
-        await addImageSrcToNextCell(images.front);
+        if (images.substituted) substituted++;
+        await addImageSrcToNextCell(images.front, images);
         batchCount++;
         setStatus(`(${++placed}/${names.length}) ${n}`);
         if (batchCount >= 16){
@@ -3238,7 +3301,10 @@
           await yieldToEventLoop(pause);
         }
       }
-      setStatus(missing ? `Done — ${missing} not found` : 'Done');
+      const notes = [];
+      if (missing) notes.push(`${missing} not found`);
+      if (substituted) notes.push(`${substituted} used a different printing`);
+      setStatus(notes.length ? `Done — ${notes.join(', ')}` : 'Done');
       showPage(currentPage);
     }
 
@@ -3247,34 +3313,93 @@
       if(name){ addCardByName(name); cardSearch.select(); }
     });
 
+    const SCRYFALL_FRONT_IMAGE_RE = /^https:\/\/cards\.scryfall\.io\/[a-z_]+\/front\/[0-9a-f]\/[0-9a-f]\/([0-9a-f-]{36})\./i;
+
+    // Scryfall bumps the ?timestamp on image URLs when it rescans a card; compare without it.
+    function imageUrlKey(url){ return String(url).split(/[?#]/)[0]; }
+
+    // Items saved before cards recorded their back face only have the front image URL, which
+    // embeds the Scryfall card id. Look those ids up and fill in `back`/`name` on the items.
+    // Returns how many cards could not be looked up.
+    async function backfillCardFaces(items){
+      const byId = new Map();
+      for (const item of items){
+        if (item.back !== undefined) continue;
+        const m = SCRYFALL_FRONT_IMAGE_RE.exec(item.url);
+        if (!m) continue;
+        const id = m[1].toLowerCase();
+        if (!byId.has(id)) byId.set(id, []);
+        byId.get(id).push(item);
+      }
+      const ids = Array.from(byId.keys());
+      let failed = 0;
+      for (let i = 0; i < ids.length; i += 75){
+        if (i > 0) await new Promise(function(r){ setTimeout(r, 150); });
+        const chunk = ids.slice(i, i + 75);
+        let data = null;
+        try{
+          const r = await fetch('https://api.scryfall.com/cards/collection', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json' },
+            body: JSON.stringify({ identifiers: chunk.map(function(id){ return { id: id }; }) }),
+            signal: AbortSignal.timeout(15000)
+          });
+          if (r.ok) data = await r.json();
+        }catch(e){ console.warn('Scryfall card lookup failed', e); }
+        if (!data || !Array.isArray(data.data)){ failed += chunk.length; continue; }
+        for (const card of data.data){
+          const waiting = byId.get(String(card.id).toLowerCase());
+          if (!waiting) continue;
+          const images = makeCardImages(card);
+          waiting.forEach(function(item){ item.back = images.back; item.name = images.name; });
+        }
+      }
+      return failed;
+    }
+
     async function addMissingDFCBacks(){
-      // Count all placed URLs across all pages
-      const urlCounts = new Map();
+      const urlItems = [];
       for (const page of pages){
         if (!page || !page.items) continue;
         for (const item of page.items){
-          if (item && item.type === 'url' && item.url){
-            urlCounts.set(item.url, (urlCounts.get(item.url) || 0) + 1);
-          }
+          if (item && item.type === 'url' && item.url) urlItems.push(item);
         }
       }
 
-      // Find DFCs with missing backs
-      const backsNeeded = []; // {name, backUrl, deficit}
-      for (const [key, raw] of scryCache){
-        const images = normalizeCardImages(raw);
-        if (!images || !images.front || !images.back) continue;
-        const frontCount = urlCounts.get(images.front) || 0;
-        if (frontCount === 0) continue;
-        const backCount = urlCounts.get(images.back) || 0;
-        const deficit = frontCount - backCount;
+      setStatus('Checking for double-faced cards…');
+      const lookupFailures = await backfillCardFaces(urlItems);
+      saveState();
+      const failureNote = lookupFailures ? ' (' + lookupFailures + ' card(s) could not be checked — offline?)' : '';
+
+      const urlCounts = new Map();
+      urlItems.forEach(function(item){
+        const k = imageUrlKey(item.url);
+        urlCounts.set(k, (urlCounts.get(k) || 0) + 1);
+      });
+
+      // Group placed fronts by card, then compare against placed backs
+      const fronts = new Map();
+      for (const item of urlItems){
+        if (!item.back) continue;
+        const k = imageUrlKey(item.url);
+        let entry = fronts.get(k);
+        if (!entry){
+          entry = { name: item.name || 'A double-faced card', backUrl: item.back, frontCount: 0 };
+          fronts.set(k, entry);
+        }
+        entry.frontCount++;
+      }
+      const backsNeeded = []; // {name, backUrl, deficit, frontCount}
+      for (const entry of fronts.values()){
+        const backCount = urlCounts.get(imageUrlKey(entry.backUrl)) || 0;
+        const deficit = entry.frontCount - backCount;
         if (deficit > 0){
-          backsNeeded.push({ name: key, backUrl: images.back, deficit: deficit, frontCount: frontCount });
+          backsNeeded.push({ name: entry.name, backUrl: entry.backUrl, deficit: deficit, frontCount: entry.frontCount });
         }
       }
 
       if (backsNeeded.length === 0){
-        setStatus('All DFC back faces are already present');
+        setStatus('All DFC back faces are already present' + failureNote);
         return;
       }
 
@@ -3295,27 +3420,28 @@
           count = parsed;
         }
         for (let i = 0; i < count; i++){
-          toAdd.push(entry.backUrl);
+          toAdd.push(entry);
         }
       }
 
       if (toAdd.length === 0){
-        setStatus('No DFC back faces to add');
+        setStatus('No DFC back faces to add' + failureNote);
         return;
       }
 
       setStatus('Adding ' + toAdd.length + ' DFC back face(s)…');
       const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
       let placed = 0;
-      for (const backUrl of toAdd){
-        await addImageSrcToNextCell(backUrl);
+      for (const entry of toAdd){
+        // A placed back face has no further face to add.
+        await addImageSrcToNextCell(entry.backUrl, { name: entry.name, back: null });
         placed++;
         setStatus('(' + placed + '/' + toAdd.length + ') Adding DFC backs…');
         if (placed % 16 === 0){
           await yieldToEventLoop(pause);
         }
       }
-      setStatus('Added ' + toAdd.length + ' DFC back face(s)');
+      setStatus('Added ' + toAdd.length + ' DFC back face(s)' + failureNote);
       showPage(currentPage);
     }
 
@@ -3508,7 +3634,7 @@
             if (entry.type === 'stored' && entry.key){
               items[j] = createStoredItemFromKey(entry.key, entry.mime || null);
             } else if (entry.type === 'url' && entry.url){
-              items[j] = createUrlItem(entry.url);
+              items[j] = createUrlItem(entry.url, entry);
             } else {
               items[j] = null;
             }
@@ -3577,7 +3703,12 @@
         return { type: 'stored', key: item.key, mime: item.mime || null };
       }
       if (item.type === 'url' && item.url){
-        return { type: 'url', url: item.url };
+        const out = { type: 'url', url: item.url };
+        if (item.back !== undefined){
+          out.back = item.back;
+          out.name = item.name || null;
+        }
+        return out;
       }
       if (item.url){
         return { type: 'url', url: item.url };
@@ -3627,7 +3758,7 @@
               if (entry.type === 'stored' && entry.key){
                 items[j] = createStoredItemFromKey(entry.key, entry.mime || null);
               } else if (entry.type === 'url' && entry.url){
-                items[j] = createUrlItem(entry.url);
+                items[j] = createUrlItem(entry.url, entry);
               } else if (entry.src && typeof entry.src === 'string'){
                 if (isDataUrl(entry.src)){
                   items[j] = await createStoredItemFromDataUrl(entry.src);
