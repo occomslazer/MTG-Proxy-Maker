@@ -3100,13 +3100,56 @@
       return cardNameKeys(card).includes(foldName(name));
     }
 
+    /* Scryfall allows 2 requests/second to search, named, random and collection and 10/second to
+       everything else; a 429 locks the client out for 30 seconds and must not be ignored. Every API
+       call goes through this queue, one at a time. Gaps carry a 10% margin for network jitter. */
+    const scryfallLimits = { minGapMs: 110, slowGapMs: 550, pauseOn429Ms: 30000, max429Retries: 2 };
+    const SCRYFALL_SLOW_PATH_RE = /^\/cards\/(search|named|random|collection)\b/;
+    let scryfallQueue = Promise.resolve();
+    let scryfallLastSentAt = 0, scryfallLastSlowSentAt = 0, scryfallPausedUntil = 0;
+
+    function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+
+    async function sendScryfallRequest(url, init){
+      const slow = SCRYFALL_SLOW_PATH_RE.test(new URL(url).pathname);
+      for (let attempt = 0; ; attempt++){
+        const readyAt = Math.max(
+          scryfallPausedUntil,
+          scryfallLastSentAt + scryfallLimits.minGapMs,
+          slow ? scryfallLastSlowSentAt + scryfallLimits.slowGapMs : 0
+        );
+        const wait = readyAt - Date.now();
+        if (wait > 0) await sleep(wait);
+        scryfallLastSentAt = Date.now();
+        if (slow) scryfallLastSlowSentAt = scryfallLastSentAt;
+        const response = await fetch(url, Object.assign({}, init, { signal: AbortSignal.timeout(15000) }));
+        if (response.status !== 429) return response;
+        const retryAfterSec = parseFloat(response.headers.get('Retry-After'));
+        const pauseMs = Math.max(scryfallLimits.pauseOn429Ms, isFinite(retryAfterSec) ? retryAfterSec * 1000 : 0);
+        scryfallPausedUntil = Date.now() + pauseMs;
+        if (attempt >= scryfallLimits.max429Retries) return response;
+        console.warn('Scryfall returned 429; pausing requests for ' + pauseMs + ' ms');
+        setStatus('Scryfall asked us to slow down — resuming in ' + Math.round(pauseMs / 1000) + ' seconds…');
+      }
+    }
+
+    function scryfallFetch(url, init){
+      const result = scryfallQueue.then(function(){ return sendScryfallRequest(url, init); });
+      scryfallQueue = result.catch(function(){});
+      return result;
+    }
+
+    // null means Scryfall has no such card; anything else unexpected is an error, not "not found".
     async function fetchScryfallJson(url){
-      const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-      return r.ok ? r.json() : null;
+      const r = await scryfallFetch(url);
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error('Scryfall request failed (HTTP ' + r.status + ')');
+      return r.json();
     }
 
     // Tries the exact printing first, then the set, then any printing. A collector number that
     // resolves to a different card (typo, or an Arena-only set code) is not accepted.
+    // Returns null when Scryfall has no such card; throws when Scryfall couldn't be asked.
     async function fetchCardByName(name){
       const { name: base, set, collectorNumber } = splitNameAndSet(name);
       const named = 'https://api.scryfall.com/cards/named?exact='+encodeURIComponent(base);
@@ -3120,11 +3163,14 @@
         const data = await fetchScryfallJson(attempts[i]);
         if (!data || !cardMatchesName(data, base)) continue;
         const images = makeCardImages(data);
-        if (!images.front) throw new Error('No image for: '+name);
+        if (!images.front){
+          console.warn('Scryfall has no image for', name);
+          return null;
+        }
         if (i > 0) images.substituted = true;
         return images;
       }
-      throw new Error('Not found: '+name);
+      return null;
     }
 
     async function addCardByName(name){
@@ -3137,7 +3183,7 @@
         }else{
           images = normalizeCardImages(await fetchCardByName(name));
         }
-        if(!images || !images.front) throw new Error('No image for: '+name);
+        if(!images || !images.front) throw new Error('Not found: '+name);
         scryCache.set(key, images);
         await addImageSrcToNextCell(images.front, images);
         setStatus(images.substituted ? 'Added (requested printing not found — used another)' : 'Added');
@@ -3181,13 +3227,29 @@
       }
     }
 
-    function collectionIdentifier(parsed){
-      if (parsed.set && parsed.collectorNumber){
-        return { set: parsed.set.toLowerCase(), collector_number: parsed.collectorNumber };
-      }
-      // The collection endpoint rejects full multi-face names ("Fire // Ice") but matches any single face.
+    // Lookups to try for a decklist line, most specific first: the exact printing, the card in
+    // that set, then any printing. The collection endpoint rejects full multi-face names
+    // ("Fire // Ice") but matches any single face, so the front face is sent.
+    function collectionCandidates(parsed){
       const name = parsed.name.split(' // ')[0].trim();
-      return parsed.set ? { name, set: parsed.set.toLowerCase() } : { name };
+      const set = parsed.set ? parsed.set.toLowerCase() : null;
+      const candidates = [];
+      if (set && parsed.collectorNumber) candidates.push({ set, collector_number: parsed.collectorNumber });
+      if (set) candidates.push({ name, set });
+      candidates.push({ name });
+      return candidates;
+    }
+
+    async function postCollection(identifiers){
+      const r = await scryfallFetch('https://api.scryfall.com/cards/collection', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ identifiers: identifiers })
+      });
+      if (!r.ok) throw new Error('Scryfall collection lookup failed (HTTP ' + r.status + ')');
+      const data = await r.json();
+      if (!data || !Array.isArray(data.data)) throw new Error('Unexpected Scryfall collection response');
+      return data.data;
     }
 
     function indexCollectionCards(cards){
@@ -3204,80 +3266,78 @@
       return index;
     }
 
-    function findCollectionCard(index, parsed){
-      const set = parsed.set ? parsed.set.toLowerCase() : null;
-      if (set && parsed.collectorNumber){
-        const card = index.get('#' + set + '#' + parsed.collectorNumber.toLowerCase());
-        return card && cardMatchesName(card, parsed.name) ? card : null;
+    // A collector number that resolves to a different card (typo, or an Arena-only set code)
+    // is not accepted.
+    function findCollectionCard(index, identifier, wantedName){
+      if (identifier.collector_number){
+        const card = index.get('#' + identifier.set + '#' + String(identifier.collector_number).toLowerCase());
+        return card && cardMatchesName(card, wantedName) ? card : null;
       }
-      const name = foldName(parsed.name);
-      return index.get(set ? name + '||' + set : name) || null;
+      const name = foldName(wantedName);
+      return index.get(identifier.set ? name + '||' + identifier.set : name) || null;
     }
 
+    // Resolves decklist lines in batches of 75: every line's most specific lookup first, then a
+    // batch of the next fallback for whatever missed. A batch that fails outright falls back to
+    // one-by-one lookups for its lines (which can be answered from the offline cache).
+    // Returns { found: Map(line -> images), failed: Set(lines Scryfall couldn't be asked about) };
+    // lines in neither were looked up and don't exist.
     async function fetchManyByName(names){
       const results = new Map();
-      const pending = new Map();
+      const failed = new Set();
+      const remember = function(original, images){
+        results.set(original, images);
+        scryCache.set(original.toLowerCase(), images);
+      };
+      let pending = [];
+      const seen = new Set();
       for (const original of names){
-        if (results.has(original) || pending.has(original)) continue;
-        const key = original.toLowerCase();
-        const cached = normalizeCardImages(scryCache.get(key));
+        if (seen.has(original)) continue;
+        seen.add(original);
+        const cached = normalizeCardImages(scryCache.get(original.toLowerCase()));
         if (cached && cached.front){
           results.set(original, cached);
           continue;
         }
         const parsed = splitNameAndSet(original);
-        pending.set(original, { original, parsed, identifier: collectionIdentifier(parsed) });
+        pending.push({ original, parsed, candidates: collectionCandidates(parsed) });
       }
-      const toFetch = Array.from(pending.values());
-      for (let i=0;i<toFetch.length;i+=75){
-        if (i > 0) await new Promise(function(r){ setTimeout(r, 150); });
-        const chunk = toFetch.slice(i, i+75);
-        let data = null;
-        try{
-          const r = await fetch('https://api.scryfall.com/cards/collection', {
-            method: 'POST',
-            headers: { 'Content-Type':'application/json' },
-            body: JSON.stringify({ identifiers: chunk.map(x=>x.identifier) }),
-            signal: AbortSignal.timeout(15000)
-          });
-          if (r.ok) data = await r.json();
-        }catch(e){ console.warn('Scryfall collection fetch failed', e); }
-        if (!data || !Array.isArray(data.data)) {
-          for (const item of chunk){
-            try{
-              const images = await fetchCardByName(item.original);
-              if(images && images.front){
-                results.set(item.original, images);
-                scryCache.set(item.original.toLowerCase(), images);
+      for (let round = 0; pending.length; round++){
+        const asking = pending.filter(function(req){ return round < req.candidates.length; });
+        const missed = [];
+        for (let i = 0; i < asking.length; i += 75){
+          const chunk = asking.slice(i, i + 75);
+          let cards;
+          try{
+            cards = await postCollection(chunk.map(function(req){ return req.candidates[round]; }));
+          }catch(e){
+            console.warn('Scryfall collection lookup failed; looking cards up one by one', e);
+            for (const req of chunk){
+              try{
+                const images = await fetchCardByName(req.original);
+                if (images) remember(req.original, images);
+              }catch(err){
+                console.warn('Scryfall lookup failed for', req.original, err);
+                failed.add(req.original);
               }
-            }catch(e){ console.warn('Scryfall fallback fetch failed for', item.original, e); }
+            }
+            continue;
           }
-          continue;
-        }
-        const index = indexCollectionCards(data.data);
-        for (const req of chunk){
-          const card = findCollectionCard(index, req.parsed);
-          let matched = false;
-          if (card){
-            const images = makeCardImages(card);
-            if (images.front){
-              results.set(req.original, images);
-              scryCache.set(req.original.toLowerCase(), images);
-              matched = true;
+          const index = indexCollectionCards(cards);
+          for (const req of chunk){
+            const card = findCollectionCard(index, req.candidates[round], req.parsed.name);
+            const images = card ? makeCardImages(card) : null;
+            if (images && images.front){
+              if (round > 0) images.substituted = true;
+              remember(req.original, images);
+            } else {
+              missed.push(req);
             }
           }
-          if (!matched){
-            try{
-              const images = await fetchCardByName(req.original);
-              if(images && images.front){
-                results.set(req.original, images);
-                scryCache.set(req.original.toLowerCase(), images);
-              }
-            }catch(e){ console.warn('Scryfall fallback fetch failed for', req.original, e); }
-          }
         }
+        pending = missed;
       }
-      return results;
+      return { found: results, failed: failed };
     }
 
     async function importDecklist(text){
@@ -3287,14 +3347,18 @@
       const names = filterBasics(namesAll, ignoreBasics, ignoreSnow);
       setStatus('Fetching deck images…');
 
-      const mapping = await fetchManyByName(names);
-      let placed = 0, missing = 0, substituted = 0;
+      const lookup = await fetchManyByName(names);
+      let placed = 0, missing = 0, substituted = 0, failed = 0;
       const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
       let batchCount = 0;
       for (const n of names){
-        const found = mapping.get(n) || scryCache.get(n.toLowerCase());
+        const found = lookup.found.get(n) || scryCache.get(n.toLowerCase());
         const images = normalizeCardImages(found);
-        if (!images || !images.front) { console.warn('No image for', n); missing++; continue; }
+        if (!images || !images.front){
+          if (lookup.failed.has(n)) failed++; else missing++;
+          console.warn('No image for', n);
+          continue;
+        }
         if (images.substituted) substituted++;
         await addImageSrcToNextCell(images.front, images);
         batchCount++;
@@ -3306,6 +3370,7 @@
       }
       const notes = [];
       if (missing) notes.push(`${missing} not found`);
+      if (failed) notes.push(`${failed} couldn't be looked up (Scryfall unavailable — try again shortly)`);
       if (substituted) notes.push(`${substituted} used a different printing`);
       setStatus(notes.length ? `Done — ${notes.join(', ')}` : 'Done');
       showPage(currentPage);
@@ -3337,20 +3402,16 @@
       const ids = Array.from(byId.keys());
       let failed = 0;
       for (let i = 0; i < ids.length; i += 75){
-        if (i > 0) await new Promise(function(r){ setTimeout(r, 150); });
         const chunk = ids.slice(i, i + 75);
-        let data = null;
+        let cards;
         try{
-          const r = await fetch('https://api.scryfall.com/cards/collection', {
-            method: 'POST',
-            headers: { 'Content-Type':'application/json' },
-            body: JSON.stringify({ identifiers: chunk.map(function(id){ return { id: id }; }) }),
-            signal: AbortSignal.timeout(15000)
-          });
-          if (r.ok) data = await r.json();
-        }catch(e){ console.warn('Scryfall card lookup failed', e); }
-        if (!data || !Array.isArray(data.data)){ failed += chunk.length; continue; }
-        for (const card of data.data){
+          cards = await postCollection(chunk.map(function(id){ return { id: id }; }));
+        }catch(e){
+          console.warn('Scryfall card lookup failed', e);
+          failed += chunk.length;
+          continue;
+        }
+        for (const card of cards){
           const waiting = byId.get(String(card.id).toLowerCase());
           if (!waiting) continue;
           const images = makeCardImages(card);
