@@ -532,6 +532,8 @@
         </label>
       </div>
 
+      <div id="tuneError" class="warning" role="alert" hidden></div>
+
       <div style="display:flex;gap:8px;align-items:center;">
         <button id="saveTuneBtn">Save</button>
         <button id="resetTuneBtn" class="secondary">Reset</button>
@@ -4023,17 +4025,43 @@
       doUpdate();
     }
 
+    // Why a tuning can't be used, in words, or '' when the grid fits on the page.
+    function tuningProblem(topIn, leftIn, cardWIn, cardHIn){
+      const pageW = readInchesVar('--page-w', 8.5), pageH = readInchesVar('--page-h', 11);
+      if (![topIn, leftIn, cardWIn, cardHIn].every(isFinite)) return 'Enter a number in every field.';
+      if (cardWIn <= 0 || cardHIn <= 0) return 'Card width and height must be greater than zero.';
+      if (topIn < 0) return 'Top margin can\'t be negative.';
+      const neededH = topIn + rows * cardHIn;
+      if (neededH > pageH + 1e-6){
+        return 'Cards this tall don\'t fit: ' + rows + ' rows × ' + cardHIn.toFixed(3) + '″ + ' + topIn.toFixed(2) +
+          '″ top margin = ' + neededH.toFixed(2) + '″, but the page is ' + pageH + '″ tall.';
+      }
+      const neededW = cols * cardWIn + 2 * Math.abs(leftIn);
+      if (neededW > pageW + 1e-6){
+        return 'Cards this wide don\'t fit: ' + cols + ' columns × ' + cardWIn.toFixed(3) + '″' +
+          (leftIn ? ' shifted ' + Math.abs(leftIn).toFixed(2) + '″' : '') + ' need ' + neededW.toFixed(2) +
+          '″, but the page is ' + pageW + '″ wide.';
+      }
+      return '';
+    }
+
     function loadTuning(){
       try{
         var raw = localStorage.getItem('mtgTuning');
         if(raw){
           var t = JSON.parse(raw)||{};
-          applyTuning(
-            (typeof t.topIn   !== 'undefined') ? t.topIn   : readInchesVar('--grid-top', .25),
-            (typeof t.leftIn  !== 'undefined') ? t.leftIn  : readInchesVar('--grid-left', 0),
-            (typeof t.cardWIn !== 'undefined') ? t.cardWIn : readInchesVar('--cell-w', 2.4750),
-            (typeof t.cardHIn !== 'undefined') ? t.cardHIn : readInchesVar('--cell-h', 3.4650)
-          );
+          var top  = (typeof t.topIn   !== 'undefined') ? Number(t.topIn)   : readInchesVar('--grid-top', .25);
+          var left = (typeof t.leftIn  !== 'undefined') ? Number(t.leftIn)  : readInchesVar('--grid-left', 0);
+          var w    = (typeof t.cardWIn !== 'undefined') ? Number(t.cardWIn) : readInchesVar('--cell-w', 2.4750);
+          var h    = (typeof t.cardHIn !== 'undefined') ? Number(t.cardHIn) : readInchesVar('--cell-h', 3.4650);
+          // Saved by an older version or carried in by an imported file
+          var problem = tuningProblem(top, left, w, h);
+          if (problem){
+            console.warn('Ignoring saved printer tuning: ' + problem);
+            setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
+            top = 0.25; left = 0; w = 2.4750; h = 3.4650;
+          }
+          applyTuning(top, left, w, h);
           if (tuneScaleLock){
             tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
           }
@@ -4051,6 +4079,7 @@
     }
 
     function openTune(){
+      document.getElementById('tuneError').hidden = true;
       tuneTopIn.value   = readInchesVar('--grid-top', .25).toFixed(2);
       tuneLeftIn.value  = readInchesVar('--grid-left', 0).toFixed(2);
       tuneCardWIn.value = readInchesVar('--cell-w', 2.4750).toFixed(4);
@@ -4087,12 +4116,17 @@
           }
         }
 
-        applyTuning(
-          parseFloat(tuneTopIn.value),
-          parseFloat(tuneLeftIn.value),
-          w,
-          h
-        );
+        const topIn = parseFloat(tuneTopIn.value), leftIn = parseFloat(tuneLeftIn.value);
+        const tuneError = document.getElementById('tuneError');
+        const problem = tuningProblem(topIn, leftIn, w, h);
+        if (problem){
+          tuneError.textContent = problem;
+          tuneError.hidden = false;
+          return;
+        }
+        tuneError.hidden = true;
+
+        applyTuning(topIn, leftIn, w, h);
 
         // Persist scaleLock and fitMode merged with other tuning
         try{
