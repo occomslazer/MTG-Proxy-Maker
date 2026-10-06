@@ -2004,6 +2004,9 @@
           throw new Error('Missing image source');
         }
         if (data.__renderToken !== token) return;
+        // Scryfall serves images with CORS; requesting them that way lets the service worker
+        // cache them for offline use. Other hosts may not send CORS headers, so leave them alone.
+        if (/^https:\/\/cards\.scryfall\.io\//i.test(src)) el.crossOrigin = 'anonymous';
         el.src = src;
         if (data.previewSrc && data.previewSrc !== src){
           data.previewSrc = null;
