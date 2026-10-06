@@ -71,7 +71,7 @@ Cards are sized to standard MTG dimensions (2.5″ × 3.5″) by default. If pri
 
 Works in all modern browsers. Some features have limited support:
 
-- **System clipboard** (Ctrl+C/V for images) — requires browser Clipboard API support; works best in the [desktop Electron app](https://github.com/OccamIndustries/MTG-Proxy-Maker/releases)
+- **System clipboard** (Ctrl+C/V for images) — requires browser Clipboard API support; works best in the [desktop Electron app](https://github.com/occomslazer/MTG-Proxy-Maker-Desktop/releases)
 - **PWA install** — supported in Chromium-based browsers (Chrome, Edge)
 - **IndexedDB** — used for image storage; falls back to in-memory storage in private browsing
 
