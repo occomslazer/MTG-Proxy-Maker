@@ -2434,8 +2434,10 @@
 
     const IMAGE_FILE_BATCH_SIZE = 16;
 
+    // requestIdleCallback never fires in a hidden tab unless given a deadline ({timeout: 0} means
+    // none), which froze imports when the user switched tabs.
     function yieldToEventLoop(scheduler){
-      return new Promise(function(r){ scheduler === setTimeout ? scheduler(r, 0) : scheduler(r, { timeout: 0 }); });
+      return new Promise(function(r){ scheduler === setTimeout ? scheduler(r, 0) : scheduler(r, { timeout: 200 }); });
     }
 
     const MAX_IMAGE_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
@@ -2531,24 +2533,27 @@
         if(!isValid){ preferred = null; }
       }
 
-      let usingPreferredFirst = !!preferred;
-      let pos = preferred || nextEmptySlot(startPage) || appendPageSlot();
+      // Where the next search starts once something has been placed. Slots are found when a card
+      // is ready to place, never ahead of time: reserving one eagerly added an empty page (a blank
+      // printed sheet) whenever the last card filled a page.
+      let searchFrom = null;
 
       function claimSlot(){
-        const target = pos || nextEmptySlot(startPage) || appendPageSlot();
-        if(!target) return null;
+        let target;
+        if (preferred) target = preferred;
+        else if (searchFrom) target = nextEmptySlotFrom(searchFrom) || appendPageSlot();
+        else target = nextEmptySlot(startPage) || appendPageSlot();
         let committed = false;
         return {
           target,
           commit(){
             if(committed) return;
             committed = true;
-            if(usingPreferredFirst){
-              usingPreferredFirst = false;
-              pos = nextEmptySlot(target.page) || appendPageSlot();
+            if (preferred){
+              preferred = null;
+              searchFrom = { page: target.page, index: 0 };
             } else {
-              const startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-              pos = nextEmptySlot(startFrom) || appendPageSlot();
+              searchFrom = { page: target.page, index: target.index + 1 };
             }
           }
         };
@@ -2564,10 +2569,13 @@
       if(pageIdx === -1) return 0;
       await imageStoreReady;
       let placed = 0;
-      let pos = {page: pageIdx, index: targetIdx};
+      // The first image replaces the target cell; the rest fill forward, finding each slot only
+      // when its image is ready (see createPlacementState).
+      let searchFrom = null;
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        const currentPos = pos;
-        if(!currentPos) return;
+        const currentPos = searchFrom
+          ? (nextEmptySlotFrom(searchFrom) || appendPageSlot())
+          : { page: pageIdx, index: targetIdx };
         const m = pages[currentPos.page];
         if(!m) return;
         try{
@@ -2575,8 +2583,7 @@
           if(!item) return;
           placeImage(m, currentPos.index, item);
           placed++;
-          const next = nextEmptySlotFrom({page: currentPos.page, index: currentPos.index+1}) || appendPageSlot();
-          pos = next;
+          searchFrom = { page: currentPos.page, index: currentPos.index + 1 };
         }catch(err){
           console.error('Failed to store dropped image', err);
         }
