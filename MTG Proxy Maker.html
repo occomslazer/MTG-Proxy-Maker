@@ -3557,11 +3557,11 @@
             <div style="display:flex;flex-direction:column;gap:8px;">
               <label class="field">
                 <input type="radio" name="exportMode" value="full" checked />
-                <strong>Full export</strong> — includes card images (larger file, works offline)
+                <strong>Full export</strong> — includes every card image and works offline (large file: roughly 0.3–1.5 MB per card)
               </label>
               <label class="field">
                 <input type="radio" name="exportMode" value="light" />
-                <strong>Lightweight</strong> — card positions and Scryfall URLs only (small file, re-fetches images on import)
+                <strong>Lightweight</strong> — card positions and Scryfall links only (small file; cards reload from Scryfall, and your own uploaded images are not included)
               </label>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
@@ -3604,10 +3604,23 @@
       return exportModal;
     }
 
-    async function performExport(mode){
+    // Must match IMAGE_CACHE in service-worker.js, which serves Scryfall card images from it.
+    const SCRYFALL_IMAGE_CACHE = 'mtg-proxy-scryfall-images-v1';
+    const SCRYFALL_IMAGE_RE = /^https:\/\/cards\.scryfall\.io\//i;
+
+    function layoutHasCards(){
+      return pages.some(function(p){ return p.items.some(Boolean); });
+    }
+
+    // A full export embeds every image so the file works offline: your own images under `images`
+    // (by storage key) and Scryfall card images under `cachedImages` (by URL). Lightweight keeps
+    // positions and links only.
+    async function buildExportData(mode){
       await imageStoreReady;
       const pagesData = [];
       const imagesData = {};
+      const cachedImages = {};
+      const scryfallUrls = new Set();
 
       for (let p = 0; p < pages.length; p++){
         const model = pages[p];
@@ -3618,9 +3631,7 @@
             pageItems.push(null);
             continue;
           }
-          const serialized = serializeItem(item);
-          if (mode === 'full' && item.type === 'stored' && item.key){
-            // Convert blob to base64
+          if (mode === 'full' && item.type === 'stored' && item.key && !imagesData[item.key]){
             try {
               const blob = await imageStore.getBlob(item.key, item.mime || null);
               const base64 = await blobToBase64(blob);
@@ -3629,9 +3640,23 @@
               console.warn('Failed to export image for key ' + item.key, err);
             }
           }
-          pageItems.push(serialized);
+          if (mode === 'full' && item.type === 'url' && SCRYFALL_IMAGE_RE.test(item.url)) scryfallUrls.add(item.url);
+          pageItems.push(serializeItem(item));
         }
         pagesData.push(pageItems);
+      }
+
+      // Usually answered from the offline image cache; the image CDN has no rate limit.
+      let done = 0;
+      for (const url of scryfallUrls){
+        setStatus('Embedding card images (' + (++done) + '/' + scryfallUrls.size + ')…');
+        try {
+          const r = await fetch(url, { mode: 'cors' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          cachedImages[url] = await blobToBase64(await r.blob());
+        } catch(err){
+          console.warn('Failed to embed card image ' + url, err);
+        }
       }
 
       // Read tuning
@@ -3650,8 +3675,34 @@
       };
       if (mode === 'full'){
         exportData.images = imagesData;
+        exportData.cachedImages = cachedImages;
       }
+      return exportData;
+    }
 
+    // What the file leaves out, in words, so the user isn't surprised when importing it elsewhere.
+    function describeExportGaps(data){
+      const own = new Set(), linked = new Set();
+      data.pages.forEach(function(page){
+        page.forEach(function(entry){
+          if (!entry) return;
+          if (entry.type === 'stored') own.add(entry.key);
+          else if (entry.url) linked.add(entry.url);
+        });
+      });
+      if (data.mode !== 'full'){
+        return own.size ? own.size + ' of your own image(s) not included — use Full export to keep them' : '';
+      }
+      const notes = [];
+      const missingOwn = Array.from(own).filter(function(k){ return !data.images[k]; }).length;
+      const missingLinked = Array.from(linked).filter(function(u){ return !data.cachedImages[u]; }).length;
+      if (missingOwn) notes.push(missingOwn + ' of your own image(s) could not be read');
+      if (missingLinked) notes.push(missingLinked + ' card image(s) could not be embedded and will need internet');
+      return notes.join('; ');
+    }
+
+    async function performExport(mode){
+      const exportData = await buildExportData(mode);
       const json = JSON.stringify(exportData);
       const blob = new Blob([json], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -3662,7 +3713,8 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      setStatus('Exported deck layout (' + mode + ')');
+      const gaps = describeExportGaps(exportData);
+      setStatus('Exported deck layout (' + mode + ')' + (gaps ? ' — ' + gaps : ''));
     }
 
     function blobToBase64(blob){
@@ -3684,22 +3736,19 @@
         throw new Error('Invalid .mtgproxy file');
       }
 
-      // Clear existing state
-      pages.forEach(disposePageItems);
-      pageWrap.innerHTML = '';
-      pages.length = 0;
+      if (layoutHasCards() && !confirm('Replace your current layout with "' + file.name + '"? Your current cards will be removed.')){
+        setStatus('Import cancelled');
+        return;
+      }
 
-      // Restore images if full export
-      if (data.mode === 'full' && data.images){
+      // Own images embedded in a full export get fresh storage keys
+      if (data.images){
         for (const [key, imgData] of Object.entries(data.images)){
           try {
             const blob = dataUrlToBlob(imgData.data);
             if (blob){
-              // Store with the same key — we need to use put directly
-              await imageStore.storeBlob(blob, imgData.mime || null).then(function(stored){
-                // Map old key to new key in page data
-                remapImageKey(data.pages, key, stored.key);
-              });
+              const stored = await imageStore.storeBlob(blob, imgData.mime || null);
+              remapImageKey(data.pages, key, stored.key);
             }
           } catch(err){
             console.warn('Failed to import image ' + key, err);
@@ -3707,31 +3756,63 @@
         }
       }
 
-      // Rebuild pages
+      // Scryfall card images embedded in a full export go into the cache the service worker
+      // serves them from, so the layout works offline straight away.
+      if (data.cachedImages && typeof caches !== 'undefined'){
+        try {
+          const cache = await caches.open(SCRYFALL_IMAGE_CACHE);
+          for (const [url, dataUrl] of Object.entries(data.cachedImages)){
+            if (!SCRYFALL_IMAGE_RE.test(url)) continue;
+            const blob = dataUrlToBlob(dataUrl);
+            if (blob) await cache.put(url, new Response(blob, { headers: { 'Content-Type': blob.type } }));
+          }
+        } catch(err){
+          console.warn('Could not fill the offline image cache', err);
+        }
+      }
+
+      // Build the new layout before touching the current one. A stored image the file refers to
+      // must exist on this machine (lightweight files don't carry own images).
+      const newItems = [];
+      const keptKeys = new Set();
+      let missingOwnImages = 0;
       for (let i = 0; i < data.pages.length; i++){
-        const m = createPage();
-        pages.push(m);
         const source = Array.isArray(data.pages[i]) ? data.pages[i] : [];
         const items = new Array(CELLS_PER_PAGE).fill(null);
         for (let j = 0; j < CELLS_PER_PAGE; j++){
           const entry = source[j];
-          if (!entry){ items[j] = null; continue; }
+          if (!entry) continue;
           try {
             if (entry.type === 'stored' && entry.key){
+              try { await imageStore.getBlob(entry.key, entry.mime || null); }
+              catch(_){ missingOwnImages++; continue; }
               items[j] = createStoredItemFromKey(entry.key, entry.mime || null);
+              keptKeys.add(entry.key);
             } else if (entry.type === 'url' && entry.url){
               items[j] = createUrlItem(entry.url, entry);
-            } else {
-              items[j] = null;
             }
           } catch(err){
             console.warn('Failed to restore item', err);
-            items[j] = null;
           }
         }
+        newItems.push(items);
+      }
+      if (!newItems.length) newItems.push(new Array(CELLS_PER_PAGE).fill(null));
+
+      // Swap: drop the current layout, keeping stored images the new one still uses
+      pages.forEach(function(m){
+        m.items.forEach(function(item){
+          if (item && !(item.type === 'stored' && keptKeys.has(item.key))) discardItem(item);
+        });
+      });
+      pageWrap.innerHTML = '';
+      pages.length = 0;
+      newItems.forEach(function(items){
+        const m = createPage();
+        pages.push(m);
         m.items = items;
         renderGrid(m);
-      }
+      });
 
       // Restore tuning if present
       if (data.tuning){
@@ -3744,7 +3825,9 @@
       syncCutMarksState();
       showPage(Math.min(Math.max(0, data.current || 0), pages.length - 1));
       saveState();
-      setStatus('Imported deck layout (' + (data.pages.length) + ' pages)');
+      setStatus('Imported deck layout (' + pages.length + ' pages)' + (missingOwnImages
+        ? ' — ' + missingOwnImages + ' of your own image(s) weren\'t in this file (lightweight exports leave them out)'
+        : ''));
     }
 
     function remapImageKey(pagesData, oldKey, newKey){
