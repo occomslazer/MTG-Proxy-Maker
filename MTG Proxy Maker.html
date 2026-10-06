@@ -1209,15 +1209,15 @@
 
                 <h3 style="margin:12px 0 4px;">Decklist importer</h3>
                 <ul class="help-list">
-                  <li>Paste one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>.</li>
-                  <li>Double-faced cards use the front face (enable “Include DFC back faces” to add the reverse).</li>
+                  <li>Paste one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>, and Arena/Moxfield exports (<code>1 Sol Ring (CMR) 472</code>) get that exact printing. Lines starting with <code>//</code> or <code>#</code> are ignored.</li>
+                  <li>Double-faced cards use the front face; click <b>Add missing DFC backs</b> afterwards to add the reverse sides.</li>
                   <li>Use the checkboxes to skip basics and Snow-Covered basics.</li>
                   <li>Images are fetched via Scryfall and placed across pages automatically; unknown cards are skipped.</li>
                 </ul>
               </div>
             </div>
 
-            <p class="footnote">* “Through the Omenpaths” cards are currently not compatible.</p>
+            <p class="footnote">* Scryfall lists “Through the Omenpaths” cards under their Spider-Man names; add the set code to get the Omenpaths version, e.g. <code>Agent Venom (OM1)</code>.</p>
 
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
@@ -1255,7 +1255,7 @@
         <div id="deckModal" class="modal">
           <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="deckTitle">
             <h2 id="deckTitle">Import decklist (Scryfall)</h2>
-            <p style="margin:0;color:#6b7280;font-size:13px">Format: <code>4 Lightning Bolt</code>, one per line. Optional set code with <code>[M11]</code> or <code>(M11)</code>. DFCs use the front face unless you include backs.</p>
+            <p style="margin:0;color:#6b7280;font-size:13px">Format: <code>4 Lightning Bolt</code>, one per line. Optional set code with <code>[M11]</code> or <code>(M11)</code>; Arena/Moxfield exports work as-is. Double-faced cards use the front face; add backs afterwards with “Add missing DFC backs”.</p>
             <textarea id="deckText" placeholder="4 Lightning Bolt&#10;2 Snapcaster Mage&#10;1 Sol Ring"></textarea>
             <div style="display:flex; gap:8px; align-items:center;">
               <label class="field" title="Skip Plains/Island/Swamp/Mountain/Forest/Wastes">

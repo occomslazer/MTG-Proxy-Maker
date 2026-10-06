@@ -1,11 +1,11 @@
 # MTG Proxy Maker
 
-A single-file HTML app that pulls card images from [Scryfall](https://scryfall.com) and arranges them on a 3×3 grid for printing MTG proxies at standard card size (2.5″ × 3.5″).
+A single-file HTML app that pulls card images from [Scryfall](https://scryfall.com) and arranges them on a 3×3 grid for printing MTG proxies at card size (2.475″ × 3.465″ by default, 99% of the standard 2.5″ × 3.5″; adjustable).
 
 ## Features
 
 - **Card search** — look up any Magic card by name via the Scryfall API
-- **Decklist import** — paste a full decklist (e.g. `4 Lightning Bolt`) to auto-fill pages
+- **Decklist import** — paste a full decklist (e.g. `4 Lightning Bolt`, or an Arena/Moxfield export like `1 Sol Ring (CMR) 472` for exact printings) to auto-fill pages
 - **Double-faced cards** — automatically add missing DFC back faces
 - **Drag & drop** — rearrange cards between cells, or drop image files directly onto the grid
 - **Multiple pages** — add as many pages as you need; all pages print at once
@@ -54,7 +54,7 @@ No build step, no dependencies, no server required.
 
 ## Print & Calibration
 
-Cards are sized to standard MTG dimensions (2.5″ × 3.5″) by default. If prints appear clipped or misaligned:
+Cards default to 2.475″ × 3.465″ (99% of the standard 2.5″ × 3.5″). If prints appear clipped or misaligned:
 
 1. Press **?** to open Help, then click **Advanced**
 2. Adjust top margin, horizontal offset, or card dimensions
