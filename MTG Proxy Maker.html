@@ -1735,6 +1735,7 @@
     function onPointerDownCell(e, model, idx){
       const cell = model.cells[idx];
       ctxHide();
+      if (previewActive) return;
       cell.focus();
 
       if (e.button !== 0) return;
@@ -1880,6 +1881,7 @@
         });
 
         cell.addEventListener('dblclick', function(){
+          if (previewActive) return;
           targetIndexForFile = {page: pages.indexOf(model), index: idx};
           fileInput.click();
         });
@@ -2353,6 +2355,7 @@
     let _handlingPaste = false;
 
     document.addEventListener('paste', async function(e){
+      if (previewActive) return;
       const active = document.activeElement;
       if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
@@ -2504,9 +2507,9 @@
       return null;
     }
 
-    function ensurePageForAppend(){
-      var slot = nextEmptySlot(0);
-      if(slot) return slot;
+    // Callers search forward from where they are first; when that runs out, cards continue on a
+    // new last page rather than wrapping back to gaps on earlier pages (which scrambled deck order).
+    function appendPageSlot(){
       var m=createPage(); pages.push(m); syncCutMarksState(); showPage(pages.length-1); saveState();
       return {page: pages.length-1, index: 0};
     }
@@ -2529,10 +2532,10 @@
       }
 
       let usingPreferredFirst = !!preferred;
-      let pos = preferred || nextEmptySlot(startPage) || ensurePageForAppend();
+      let pos = preferred || nextEmptySlot(startPage) || appendPageSlot();
 
       function claimSlot(){
-        const target = pos || nextEmptySlot(startPage) || ensurePageForAppend();
+        const target = pos || nextEmptySlot(startPage) || appendPageSlot();
         if(!target) return null;
         let committed = false;
         return {
@@ -2542,10 +2545,10 @@
             committed = true;
             if(usingPreferredFirst){
               usingPreferredFirst = false;
-              pos = nextEmptySlot(target.page) || ensurePageForAppend();
+              pos = nextEmptySlot(target.page) || appendPageSlot();
             } else {
               const startFrom = (target.index + 1 >= CELLS_PER_PAGE) ? target.page + 1 : target.page;
-              pos = nextEmptySlot(startFrom) || ensurePageForAppend();
+              pos = nextEmptySlot(startFrom) || appendPageSlot();
             }
           }
         };
@@ -2572,7 +2575,7 @@
           if(!item) return;
           placeImage(m, currentPos.index, item);
           placed++;
-          const next = nextEmptySlotFrom({page: currentPos.page, index: currentPos.index+1}) || ensurePageForAppend();
+          const next = nextEmptySlotFrom({page: currentPos.page, index: currentPos.index+1}) || appendPageSlot();
           pos = next;
         }catch(err){
           console.error('Failed to store dropped image', err);
@@ -2823,6 +2826,12 @@
         return;
       }
 
+      // Print preview is read-only: only printing (and Esc, handled with the preview code) apply.
+      if(previewActive){
+        if(e.key==='p' || e.key==='P'){ e.preventDefault(); printBtn.click(); }
+        return;
+      }
+
       if(e.key==='F1' || e.key==='?' || e.key==='h' || e.key==='H'){
         e.preventDefault();
         openModal(ensureHelpModal());
@@ -2900,10 +2909,10 @@
         const el = document.activeElement;
         const cell = el && el.classList && el.classList.contains('cell') ? el : null;
         if(cell){
-          const idx = parseInt(cell.dataset.index, 10);
-          if (!Number.isFinite(idx) || idx < 0 || idx >= CELLS_PER_PAGE) return;
-          const m = getCurrent();
-          if (!m) return;
+          // The focused cell's own page, which isn't always the current one.
+          const resolved = resolveModelFromCellEl(cell);
+          if (!resolved) return;
+          const m = resolved.model, idx = resolved.index;
           if (m.items[idx]){
             discardItem(m.items[idx]);
             m.items[idx] = null;
@@ -2918,10 +2927,9 @@
       if(e.altKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
         const cell = document.activeElement?.closest?.('.cell');
         if(!cell) return;
-        const i = parseInt(cell.dataset.index, 10);
-        if (!Number.isFinite(i) || i < 0 || i >= CELLS_PER_PAGE) return;
-        const m = getCurrent();
-        if (!m) return;
+        const resolved = resolveModelFromCellEl(cell);
+        if (!resolved) return;
+        const m = resolved.model, i = resolved.index;
         let j = i;
         if (e.key==='ArrowLeft' && (i%cols)>0) j=i-1;
         if (e.key==='ArrowRight' && (i%cols)<cols-1) j=i+1;
@@ -3076,8 +3084,13 @@
     // "Name", "Name [SET]", "Name (SET)", and Arena/Moxfield exports: "Name (SET) 123 *F*"
     const SET_SUFFIX_RE = /^(.*?)\s*(?:\(([A-Za-z0-9]{2,6})\)|\[([A-Za-z0-9]{2,6})\])(?:\s+([^\s*]+))?(?:\s+\*[A-Za-z]+\*)*\s*$/;
 
+    // Phones and many websites type curly quotes; Scryfall names use straight ones.
+    function straightenQuotes(s){
+      return String(s).replace(/[\u2018\u2019\u02bc]/g, "'").replace(/[\u201c\u201d]/g, '"');
+    }
+
     function splitNameAndSet(raw){
-      let s = String(raw).trim();
+      let s = straightenQuotes(raw).trim();
       const qm = s.match(/^(\d+)\s*x?\s+(.+)$/i);
       if (qm) s = qm[2];
       const m = s.match(SET_SUFFIX_RE);
@@ -3202,6 +3215,8 @@
         if (inAbout && /^name\s/i.test(line)) continue;
         inAbout = false;
         if (DECK_SECTION_RE.test(line)) continue;
+        if (/^(\/\/|#)/.test(line)) continue;   // comments and "//Sideboard"-style headers
+        line = line.replace(/^SB:\s*/i, '');    // MWS/Cockatrice sideboard prefix
         const m = line.match(/^(\d+)\s*x?\s+(.+)$/i);
         if (m){
           const cnt = Math.min(parseInt(m[1],10), 999);
@@ -3215,7 +3230,7 @@
     }
 
     async function addImageSrcToNextCell(src, card){
-      var pos = nextEmptySlot(currentPage) || ensurePageForAppend();
+      var pos = nextEmptySlot(currentPage) || appendPageSlot();
       var m = pages[pos.page];
       if (!m) return;
       try{
@@ -4164,7 +4179,7 @@
       if (pageIdx === -1) return null;
       let slot = nextEmptySlotFrom({ page: pageIdx, index: index + 1 });
       if (!slot){
-        slot = ensurePageForAppend();
+        slot = appendPageSlot();
       }
       const dstModel = pages[slot.page];
       if (!dstModel) return null;
@@ -4372,6 +4387,7 @@
 
     document.addEventListener('contextmenu', function(e){
       if (!ctxMenu) return;
+      if (previewActive){ ctxHide(); return; }
       const target = e.target;
       if (!target) { ctxHide(); return; }
       if (ctxMenu.contains(target)){ return; }
@@ -4445,6 +4461,17 @@
         window.print();
       });
     }
+
+    // Preview is read-only: swallow drops before the cell/page handlers see them. They must still
+    // be cancelled, or the browser navigates away to open the dropped file.
+    ['dragenter', 'dragover', 'drop'].forEach(function(type){
+      document.addEventListener(type, function(e){
+        if (!previewActive) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
+      }, true);
+    });
 
     // Escape exits preview mode
     document.addEventListener('keydown', function(e){
