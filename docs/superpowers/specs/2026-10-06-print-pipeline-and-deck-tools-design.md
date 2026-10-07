@@ -147,12 +147,15 @@ Geometry (w, h = card size; b = bleed; g = gap; all inches):
 
 ### 2.4 Cut lines
 
-Marks never enter any card's bleed box. Thickness and colour as today.
+Thickness and colour as today.
 
-- **Ticks:** for each trim edge, a 0.18 in mark in the page margin outside the outermost bleed
-  boxes (today's behaviour, recomputed from the calculator).
-- **Full lines:** along each trim edge across the whole page, interrupted wherever it would cross
-  a bleed box (so they run through gaps and margins only).
+- **Ticks:** exactly today's marks, so default prints stay pixel-identical (section 0): for each
+  trim-edge line, a 0.18″ mark centred on the line that starts 0.13″ outside the grid's outer
+  edge and ends 0.05″ inside it (today's `--cut-mark-length` 0.18″ and `--cut-mark-inset` 0.05″).
+  That last 0.05″ touches the outermost cards' borders (or bleed), as it does today.
+- **Full lines:** along each trim edge across the whole page, interrupted wherever the line
+  (including its thickness) would overlap a bleed box, so they run through gaps and margins only and
+  never touch a card.
 - **Corners:** at each trim corner, two arms continuing the trim lines outward from the bleed box,
   each `min(3 mm, g / 2)` long so neighbouring cards' marks never touch. Requires `g > 0`.
 
@@ -320,7 +323,8 @@ Browser tests in `.claude/tests/` (test-first, as before):
   layout, rendering or printing.
 - Calculator: exact boxes for Letter/A4 × gap {0, 3 mm} × bleed {off, 3 mm}; back mirroring with
   offsets; fit problems.
-- Cut marks: no segment intersects any bleed box, for all three styles.
+- Cut marks: Ticks equal today's geometry exactly; Full lines and Corners never overlap any bleed
+  box.
 - Border sampling: black, white and transparent-corner images; fallback for unreadable images.
 - Ripple insert/remove: mid-page, across pages, with and without gaps, spilling to a new page,
   trailing-page removal, stored images survive.
