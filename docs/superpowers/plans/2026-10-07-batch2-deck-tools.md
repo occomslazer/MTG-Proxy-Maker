@@ -743,7 +743,7 @@ Also re-render rows when the visible page changes (so hover outlines follow): `s
 
 - [ ] **Step 7: Harness — panel open must not change prints.** In `.claude/tests/print-harness.mjs`, add a scenario field `deckPanel: true` that runs `setDeckPanelOpen(true)` in SETUP after the layout is built (and `setDeckPanelOpen(false)` is the default otherwise — call it explicitly at the start of SETUP so scenarios don't leak). Add `'two-pages-cuts-deck': { cards: 11, cutMarks: true, deckPanel: true }`. Run it **without** `--geometry` (legacy mode, like the baseline) into a temp dir, rename its PDF to `two-pages-cuts.pdf`, and compare with `compare-prints.py` against `print-baseline` → must equal the gate numbers (599 / 0). Run the full gate.
 
-- [ ] **Step 8: Run `tests-deck-panel.js` — expect all PASS (23).** Run `tests-deck-rows.js`, `tests-deck-data.js`, the regression runner and all batch 1 suites. Screenshot the app with the panel open (light and dark) at ~1280×800 and check it looks tidy.
+- [ ] **Step 8: Run `tests-deck-panel.js` — expect all PASS (24).** (As built: the + / − label check moved to Task 4's suite; a count-label check replaced it.) Run `tests-deck-rows.js`, `tests-deck-data.js`, the regression runner and all batch 1 suites. Screenshot the app with the panel open (light and dark) at ~1280×800 and check it looks tidy.
 
 - [ ] **Step 9: Commit** — `feat: Deck side panel with rows, totals and copy outlines (B2-T3)`.
 
@@ -809,6 +809,7 @@ Also re-render rows when the visible page changes (so hover outlines follow): `s
       fresh(); put(0, itemFor(fakeCard(1, 'Abrade', 'x', 1))); renderDeckPanel();
       row('Abrade').querySelector('.deck-plus').click();
       await sleep(50);
+      ok('buttons labelled', row('Abrade').querySelector('.deck-plus').getAttribute('aria-label') === 'Add a copy of Abrade' && row('Abrade').querySelector('.deck-minus').getAttribute('aria-label') === 'Remove a copy of Abrade', row('Abrade').innerHTML);
       ok('+ button adds', deckRows()[0].count === 2, deckRows()[0].count);
       await sleep(250);
       row('Abrade').querySelector('.deck-minus').focus();
@@ -883,7 +884,7 @@ Also re-render rows when the visible page changes (so hover outlines follow): `s
 
 (`rippleRemove` discards the removed card — for an upload copy that deletes its stored image — and shows/saves the page; `rippleInsert` saves. Both cancel a pending internal C/X.)
 
-- [ ] **Step 4: Run `tests-deck-plusminus.js` — expect all PASS (13).** Run `tests-deck-panel.js` (its row checks still pass with the new buttons: the grid has room for them), `tests-ripple.js`, the regression runner.
+- [ ] **Step 4: Run `tests-deck-plusminus.js` — expect all PASS (14).** Run `tests-deck-panel.js` (its row checks still pass with the new buttons: the grid has room for them), `tests-ripple.js`, the regression runner.
 
 - [ ] **Step 5: Commit** — `feat: + and − on deck rows ripple copies in and out (B2-T4)`.
 
@@ -1562,7 +1563,7 @@ Grep the whole file for any other user-facing "Decklist" wording that refers to 
 - [ ] **Step 2: README.** Read `README.md` (LF line endings). Replace the feature bullet(s) about the decklist with a short **Deck panel** section in the README's existing style: Deck button and side panel, rows with counts, + / −, hover/click, ⇄ art picker and Change printing…, Add tokens…, Paste decklist… inside the panel. Keep it concise.
 
 - [ ] **Step 3: Final verification** (fresh page load for each suite):
-  - New suites: `tests-deck-data.js` (20), `tests-deck-rows.js` (18), `tests-deck-panel.js` (23), `tests-deck-plusminus.js` (13), `tests-art-picker.js` (28), `tests-tokens.js` (14).
+  - New suites: `tests-deck-data.js` (20), `tests-deck-rows.js` (18), `tests-deck-panel.js` (24), `tests-deck-plusminus.js` (14), `tests-art-picker.js` (28), `tests-tokens.js` (14).
   - Regression runner (102) and every batch 1 suite.
   - Console: no `TypeError`/`ReferenceError`.
   - Real-print gate (0 / 488 / 599 / 0) and the panel-open comparison from Task 3 Step 7.
