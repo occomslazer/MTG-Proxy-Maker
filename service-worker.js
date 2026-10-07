@@ -1,6 +1,6 @@
 // Bump SHELL_CACHE when the precached file list changes. The app page itself is always
 // fetched network-first, so normal releases reach users without a bump.
-const SHELL_CACHE = 'mtg-proxy-shell-v2';
+const SHELL_CACHE = 'mtg-proxy-shell-v3';
 const API_CACHE = 'mtg-proxy-scryfall-api-v1';
 const IMAGE_CACHE = 'mtg-proxy-scryfall-images-v1';
 const KNOWN_CACHES = [SHELL_CACHE, API_CACHE, IMAGE_CACHE];
@@ -11,7 +11,8 @@ const MAX_API_ENTRIES = 2000;
 
 const APP_SHELL = [
   './MTG Proxy Maker.html',
-  './manifest.json'
+  './manifest.json',
+  './card-back.jpg'
 ];
 
 self.addEventListener('install', function(event) {
