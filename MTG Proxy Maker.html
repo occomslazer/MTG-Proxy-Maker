@@ -1467,6 +1467,7 @@
       if (GAP_CHOICES_MM.includes(t.gapMm)) s.gapMm = t.gapMm;
       if (BLEED_CHOICES_MM.includes(t.bleedMm)) s.bleedMm = t.bleedMm;
       if (CUT_STYLES.includes(t.cutStyle)) s.cutStyle = t.cutStyle;
+      if (s.cutStyle === 'corners' && !(s.gapMm > 0)) s.cutStyle = 'ticks';
       s.duplex = t.duplex === true;
       if (t.dfcOnBack === true || t.dfcOnBack === false) s.dfcOnBack = t.dfcOnBack;
       if (typeof t.backImageKey === 'string' && t.backImageKey) s.backImageKey = t.backImageKey;
@@ -1479,6 +1480,8 @@
 
     function savePrintSettings(patch){
       Object.assign(printSettings, patch || {});
+      // Corners need a gap; with none they'd draw nothing, so fall back to Ticks.
+      if (printSettings.cutStyle === 'corners' && !(printSettings.gapMm > 0)) printSettings.cutStyle = 'ticks';
       try{
         const prev = readSavedTuning() || {};
         Object.keys(PRINT_DEFAULTS).forEach(function(k){ prev[k] = printSettings[k]; });
@@ -1497,8 +1500,7 @@
         paper: printSettings.paper, gapMm: printSettings.gapMm, bleedMm: printSettings.bleedMm, cutStyle: printSettings.cutStyle,
         topIn: readInchesVar('--grid-top', 0.25), leftIn: readInchesVar('--grid-left', 0),
         cardWIn: readInchesVar('--cell-w', 2.475), cardHIn: readInchesVar('--cell-h', 3.465),
-        backOffsetXIn: printSettings.backOffsetXIn, backOffsetYIn: printSettings.backOffsetYIn,
-        duplex: printSettings.duplex
+        backOffsetXIn: printSettings.backOffsetXIn, backOffsetYIn: printSettings.backOffsetYIn
       };
     }
 
@@ -1617,15 +1619,13 @@
           (s.leftIn ? ' shifted ' + Math.abs(s.leftIn).toFixed(2) + '″' : '') + ' need ' + neededW.toFixed(2) +
           '″, but the page is ' + fmt(page.w) + '″ wide.';
       }
-      if (s.duplex){
-        const room = (page.w - grid.w) / 2, shiftX = s.leftIn + (s.backOffsetXIn || 0);
-        if (Math.abs(shiftX) > room + 1e-6){
-          return 'The back side runs off the page: offset ' + shiftX.toFixed(2) + '″ but there is only ' + room.toFixed(2) + '″ of room on each side.';
-        }
-        const top = s.topIn + (s.backOffsetYIn || 0);
-        if (top < -1e-6 || top + grid.h > page.h + 1e-6){
-          return 'The back side runs off the page: its cards would span ' + top.toFixed(2) + '–' + (top + grid.h).toFixed(2) + '″ on a ' + fmt(page.h) + '″ page.';
-        }
+      const room = (page.w - grid.w) / 2, shiftX = s.leftIn + (s.backOffsetXIn || 0);
+      if (Math.abs(shiftX) > room + 1e-6){
+        return 'The back side runs off the page: offset ' + shiftX.toFixed(2) + '″ but there is only ' + room.toFixed(2) + '″ of room on each side.';
+      }
+      const top = s.topIn + (s.backOffsetYIn || 0);
+      if (top < -1e-6 || top + grid.h > page.h + 1e-6){
+        return 'The back side runs off the page: its cards would span ' + top.toFixed(2) + '–' + (top + grid.h).toFixed(2) + '″ on a ' + fmt(page.h) + '″ page.';
       }
       return '';
     }
@@ -4279,9 +4279,7 @@
               } else {
                 console.warn('Ignoring saved printer tuning: ' + problem);
                 setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
-                top = 0.25; left = 0; w = 2.4750; h = 3.4650;
-                if (tuningProblem(top, left, w, h)) savePrintSettings(PLAIN_PRINT);
-              }
+                top = 0.25; left = 0; w = 2.4750; h = 3.4650;              }
             }
             applyTuning(top, left, w, h);
           }
