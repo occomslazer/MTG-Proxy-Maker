@@ -1677,49 +1677,60 @@
     }
 
     const borderColorCache = new Map();
+    let borderCanvas = null;
 
-    // Border colour of an <img>, cached by its URL.
+    // Border colour of an <img>, cached by its URL (not for data: URLs, which are huge keys, and not
+    // for failures, which may succeed later). Black when the image can't be read.
     function sampleBorderColor(img){
       const key = img.currentSrc || img.src;
       if (key && borderColorCache.has(key)) return borderColorCache.get(key);
       const color = borderColorFromSource(img, img.naturalWidth, img.naturalHeight);
-      if (key) borderColorCache.set(key, color);
-      return color;
+      if (color && key && !key.startsWith('data:')) borderColorCache.set(key, color);
+      return color || 'rgb(0,0,0)';
     }
 
     // A card's border colour: the most common colour in a band 0.5-2% inside each edge (the outer
     // border), skipping transparent pixels (rounded corners). Colours are grouped into 16 levels per
-    // channel; the winning group's average is used. Black when the image can't be read.
+    // channel; the winning group's average is used. Returns null when the image can't be read
+    // (another site without CORS).
     // `source` is anything drawImage accepts (an <img>, an ImageBitmap, a canvas).
     function borderColorFromSource(source, naturalW, naturalH){
-      let color = 'rgb(0,0,0)';
       try{
-        const W = 200, H = Math.max(1, Math.round(W * (naturalH || 1) / (naturalW || 1)));
-        const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        const W = 200, H = Math.min(400, Math.max(1, Math.round(W * (naturalH || 1) / (naturalW || 1))));
+        if (!borderCanvas) borderCanvas = document.createElement('canvas');
+        const cv = borderCanvas; cv.width = W; cv.height = H;
         const g = cv.getContext('2d', { willReadFrequently: true });
+        g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
         g.drawImage(source, 0, 0, W, H);
         const data = g.getImageData(0, 0, W, H).data;
         const groups = new Map();
-        for (let y = 0; y < H; y++){
-          for (let x = 0; x < W; x++){
-            const d = Math.min(x / W, 1 - (x + 1) / W, y / H, 1 - (y + 1) / H);
-            if (d < 0.005 || d > 0.02) continue;
-            const i = (y * W + x) * 4;
-            if (data[i + 3] < 200) continue;
-            const r = data[i], gr = data[i + 1], bl = data[i + 2];
-            const k = ((r >> 4) << 8) | ((gr >> 4) << 4) | (bl >> 4);
-            const e = groups.get(k);
-            if (e){ e.n++; e.r += r; e.g += gr; e.b += bl; }
-            else groups.set(k, { n: 1, r: r, g: gr, b: bl });
+        // Band pixel ranges on each axis: [lo0..hi0] near the start edge, [lo1..hi1] near the end edge.
+        const bx0 = Math.ceil(0.005 * W), bx1 = Math.floor(0.02 * W), by0 = Math.ceil(0.005 * H), by1 = Math.floor(0.02 * H);
+        const tally = function(x, y){
+          const i = (y * W + x) * 4;
+          if (data[i + 3] < 200) return;
+          const r = data[i], gr = data[i + 1], bl = data[i + 2];
+          const k = ((r >> 4) << 8) | ((gr >> 4) << 4) | (bl >> 4);
+          const e = groups.get(k);
+          if (e){ e.n++; e.r += r; e.g += gr; e.b += bl; }
+          else groups.set(k, { n: 1, r: r, g: gr, b: bl });
+        };
+        for (let y = by0; y <= H - 1 - by0; y++){
+          const rowInBand = y <= by1 || y >= H - 1 - by1;
+          if (rowInBand){
+            for (let x = bx0; x <= W - 1 - bx0; x++) tally(x, y);
+          }else{
+            for (let x = bx0; x <= bx1; x++) tally(x, y);
+            for (let x = Math.max(W - 1 - bx1, bx1 + 1); x <= W - 1 - bx0; x++) tally(x, y);
           }
         }
         let best = null;
         groups.forEach(function(e){ if (!best || e.n > best.n) best = e; });
-        if (best) color = 'rgb(' + Math.round(best.r / best.n) + ',' + Math.round(best.g / best.n) + ',' + Math.round(best.b / best.n) + ')';
+        if (best) return 'rgb(' + Math.round(best.r / best.n) + ',' + Math.round(best.g / best.n) + ',' + Math.round(best.b / best.n) + ')';
       }catch(err){
         console.warn('Could not sample the border colour; using black', err);
       }
-      return color;
+      return null;
     }
 
     function createPage(){
@@ -2163,6 +2174,7 @@
 
       if(!data){
         cell.classList.remove('filled'); bleedBox.classList.remove('filled');
+        bleedBox.style.background = ''; cell.style.removeProperty('--bleed-color');
         cell.setAttribute('aria-label','Empty cell ' + (i+1));
         const ph=document.createElement('div'); ph.className='placeholder'; ph.textContent='Cell ' + (i+1);
         cell.appendChild(ph);
@@ -2171,6 +2183,9 @@
 
       cell.setAttribute('aria-label','Occupied cell ' + (i+1));
       cell.classList.add('filled'); bleedBox.classList.add('filled');
+      // A card remembers its border colour, so moving it doesn't flash the previous occupant's colour.
+      if (data.__bleedColor){ bleedBox.style.background = data.__bleedColor; cell.style.setProperty('--bleed-color', data.__bleedColor); }
+      else { bleedBox.style.background = ''; cell.style.removeProperty('--bleed-color'); }
       const el=document.createElement('img');
       el.alt = '';
       el.draggable = false;
@@ -2181,8 +2196,13 @@
         if (data.__renderToken !== token) return;
         fitImage(el);
         const color = sampleBorderColor(el);
+        data.__bleedColor = color;
         bleedBox.style.background = color;
         cell.style.setProperty('--bleed-color', color);
+      };
+      el.onerror = function(){
+        if (data.__renderToken !== token) return;
+        bleedBox.style.background = ''; cell.style.removeProperty('--bleed-color');
       };
       cell.appendChild(el);
 
