@@ -1563,7 +1563,7 @@ Grep the whole file for any other user-facing "Decklist" wording that refers to 
 - [ ] **Step 2: README.** Read `README.md` (LF line endings). Replace the feature bullet(s) about the decklist with a short **Deck panel** section in the README's existing style: Deck button and side panel, rows with counts, + / −, hover/click, ⇄ art picker and Change printing…, Add tokens…, Paste decklist… inside the panel. Keep it concise.
 
 - [ ] **Step 3: Final verification** (fresh page load for each suite):
-  - New suites: `tests-deck-data.js` (20), `tests-deck-rows.js` (18), `tests-deck-panel.js` (37), `tests-deck-plusminus.js` (34), `tests-art-picker.js` (36), `tests-tokens.js` (14).
+  - New suites: `tests-deck-data.js` (20), `tests-deck-rows.js` (18), `tests-deck-panel.js` (37), `tests-deck-plusminus.js` (34), `tests-art-picker.js` (36), `tests-tokens.js` (43).
   - Regression runner (102) and every batch 1 suite.
   - Console: no `TypeError`/`ReferenceError`.
   - Real-print gate (0 / 488 / 599 / 0) and the panel-open comparison from Task 3 Step 7.
