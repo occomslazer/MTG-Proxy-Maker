@@ -5436,12 +5436,12 @@
       // Show the imported layout before any question about it.
       syncCutMarksState();
       showPage(Math.min(Math.max(0, data.current || 0), pages.length - 1));
-      if (data.tuning && typeof data.tuning === 'object') await importPrintSettings(data.tuning, importedBackKey, keptKeys);
-      const settingsNote = await askImportedDfcQuestions();
+      const notes = (data.tuning && typeof data.tuning === 'object') ? await importPrintSettings(data.tuning, importedBackKey, keptKeys) : [];
+      notes.push(await askImportedDfcQuestions());
       saveState();
       setStatus('Imported deck layout (' + pages.length + ' pages)' + (missingOwnImages
         ? ' — ' + missingOwnImages + ' of your own image(s) weren\'t in this file (lightweight exports leave them out)'
-        : '') + (settingsNote ? ' — ' + settingsNote : ''));
+        : '') + notes.filter(Boolean).map(function(n){ return ' — ' + n; }).join(''));
     }
 
     // True when two blobs hold the same bytes.
@@ -5455,10 +5455,11 @@
     // Print settings are printer-specific: an imported file's apply only if they match ours or the user
     // agrees ("Keep mine" / "Use the file's"; closing the question keeps mine). `theirs` is the file's
     // saved tuning, its card back already re-stored as importedBackKey when the file carried it.
+    // Resolves with the notes of any settings reset because they didn't fit the page.
     async function importPrintSettings(theirs, importedBackKey, keptKeys){
       // Start from what is saved now, not this tab's copy: another tab may have changed the settings
       // or the card back since, and the comparison and the clean-up below must describe the real ones.
-      loadTuning();
+      const notes = [loadTuning()];
       const saved = readSavedTuning() || {};
       // Our settings as they are in effect, so a field we never saved still compares by its value.
       const mine = Object.assign({}, printSettings, {
@@ -5490,7 +5491,7 @@
         try {
           // loadTuning() checks the result fits the page, as for any saved settings.
           localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, readSavedTuning() || {}, theirs, { backImageKey: theirsBack })));
-          loadTuning();
+          notes.push(loadTuning());
         } catch(_){}
       }
       // Card back images nothing uses any more: the file's if we kept ours, ours if the file's replaced it.
@@ -5500,12 +5501,16 @@
         if (key && key !== inUse && !backKeyInUse(key) && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
       });
       syncBackPages();
+      return notes.filter(function(n, i){ return n && notes.indexOf(n) === i; });
     }
 
     // After any import: double-sided printing is on with no answer about double-faced cards, and the
     // layout has some, so ask, as Save does when turning it on. The import has happened, so closing
     // the first question means "No". Resolves with a note for the import's status.
     async function askImportedDfcQuestions(){
+      // Decide on the saved settings (another tab may have changed them): re-read and validated as
+      // savePrintSettings does with no change, re-laying out if they differ from this tab's.
+      savePrintSettings({});
       if (!printSettings.duplex || printSettings.dfcOnBack !== null) return '';
       setStatus('Checking double-faced cards…');
       const failed = await lookUpCardFaces(placedUrlItems());
@@ -5729,7 +5734,11 @@
       return computeLayout(Object.assign(currentLayoutSettings(), { topIn: topIn, leftIn: leftIn, cardWIn: cardWIn, cardHIn: cardHIn })).problem;
     }
 
+    // Applies the saved tuning and print settings. Returns the note shown when saved settings
+    // didn't fit the page and were reset ('' when none), so a caller with its own status can keep it.
     function loadTuning(){
+      let note = '';
+      const reset = function(msg){ note = msg; setStatus(msg); };
       try{
         loadPrintSettings();
         var raw = localStorage.getItem('mtgTuning');
@@ -5750,10 +5759,10 @@
               // Find the culprit: the print settings (gap, bleed, back offsets) or the printer tuning.
               if (!computeLayout(Object.assign(currentLayoutSettings(), PLAIN_PRINT, { topIn: top, leftIn: left, cardWIn: w, cardHIn: h })).problem){
                 savePrintSettings(PLAIN_PRINT, true);   // laid out at the end of loadTuning
-                setStatus('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
+                reset('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
               } else {
                 console.warn('Ignoring saved printer tuning: ' + problem);
-                setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
+                reset('Saved printer tuning didn\'t fit the page and was reset to defaults');
                 top = DEFAULT_TUNING.topIn; left = DEFAULT_TUNING.leftIn; w = DEFAULT_TUNING.cardWIn; h = DEFAULT_TUNING.cardHIn;
               }
             }
@@ -5762,7 +5771,7 @@
           // Print settings that don't fit even with the current tuning (e.g. from an imported file).
           if (computeLayout().problem){
             savePrintSettings(PLAIN_PRINT, true);   // laid out at the end of loadTuning
-            setStatus('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
+            reset('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
           }
           if (tuneScaleLock){
             tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
@@ -5772,6 +5781,7 @@
       if (fitModeSelect) fitModeSelect.value = savedFitMode;
       // Print settings can change above without a tuning change (which would redraw); redraw to match.
       applyLayout();
+      return note;
     }
 
     function bindTuneButton(){
