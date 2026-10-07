@@ -114,6 +114,11 @@
     .cell { outline: 0.5pt dashed var(--guide-color); outline-offset: -0.5pt; background: #f9fafb; position: absolute; box-sizing: border-box; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; contain: layout paint size; }
     .cell img { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: none; image-rendering: auto; -webkit-user-drag: none; user-select: none; }
     .cell .placeholder{ color: #9ca3af; font-size: 12px; text-align: center; padding: 8px; user-select: none; }
+    /* Bleed: a box in the card's border colour behind the card; the card's corners are squared and
+       filled with the same colour. Both print even with "Background graphics" off. */
+    .bleed-box { position: absolute; display: none; background: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .page.has-bleed .bleed-box.filled { display: block; }
+    .page.has-bleed .cell.filled { border-radius: 0; background: var(--bleed-color, #000); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
     .cell:focus-visible::after{
       opacity:1;
@@ -1648,7 +1653,11 @@
       const origin = { x: shiftX, y: 0 };
       placeBox(model.gridEl, layout.grid, origin);
       model.gridEl.style.transform = shift;
-      model.cells.forEach(function(cell, i){ placeBox(cell, layout.cards[i].trim, layout.grid); });
+      model.pageEl.classList.toggle('has-bleed', layout.bleedIn > 0);
+      model.cells.forEach(function(cell, i){
+        placeBox(cell, layout.cards[i].trim, layout.grid);
+        placeBox(model.bleedBoxes[i], layout.cards[i].bleed, layout.grid);
+      });
       model.cutMarksLayer.style.transform = shift;
       drawCutMarks(model.cutMarksLayer, layout.cutMarks, origin);
       model.gridEl.querySelectorAll('img').forEach(function(img){ if (img.complete && img.naturalWidth) fitImage(img); });
@@ -1667,10 +1676,56 @@
       });
     }
 
+    const borderColorCache = new Map();
+
+    // Border colour of an <img>, cached by its URL.
+    function sampleBorderColor(img){
+      const key = img.currentSrc || img.src;
+      if (key && borderColorCache.has(key)) return borderColorCache.get(key);
+      const color = borderColorFromSource(img, img.naturalWidth, img.naturalHeight);
+      if (key) borderColorCache.set(key, color);
+      return color;
+    }
+
+    // A card's border colour: the median of a band 1.5-3% inside each edge, skipping transparent
+    // pixels (rounded corners). Black when the image can't be read (another site without CORS).
+    // `source` is anything drawImage accepts (an <img>, an ImageBitmap, a canvas).
+    function borderColorFromSource(source, naturalW, naturalH){
+      let color = 'rgb(0,0,0)';
+      try{
+        const W = 200, H = Math.max(1, Math.round(W * (naturalH || 1) / (naturalW || 1)));
+        const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+        const g = cv.getContext('2d', { willReadFrequently: true });
+        g.drawImage(source, 0, 0, W, H);
+        const data = g.getImageData(0, 0, W, H).data;
+        const rs = [], gs = [], bs = [];
+        for (let y = 0; y < H; y++){
+          for (let x = 0; x < W; x++){
+            const d = Math.min(x / W, 1 - (x + 1) / W, y / H, 1 - (y + 1) / H);
+            if (d < 0.015 || d > 0.03) continue;
+            const i = (y * W + x) * 4;
+            if (data[i + 3] < 200) continue;
+            rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+          }
+        }
+        if (rs.length){
+          const med = function(a){ a.sort(function(p, q){ return p - q; }); return a[a.length >> 1]; };
+          color = 'rgb(' + med(rs) + ',' + med(gs) + ',' + med(bs) + ')';
+        }
+      }catch(err){
+        console.warn('Could not sample the border colour; using black', err);
+      }
+      return color;
+    }
+
     function createPage(){
       var p = document.createElement('div'); p.className = 'page'; p.setAttribute('role','region'); p.setAttribute('aria-label','Printable page');
       var grid = document.createElement('div'); grid.className = 'grid'; grid.setAttribute('role','grid'); grid.setAttribute('aria-label','9 image grid');
-      var cells = [];
+      var cells = [], bleedBoxes = [];
+      for(var b=0;b<CELLS_PER_PAGE;b++){
+        var bleedBox = document.createElement('div'); bleedBox.className = 'bleed-box'; bleedBox.setAttribute('aria-hidden', 'true');
+        grid.appendChild(bleedBox); bleedBoxes.push(bleedBox);
+      }
       for(var i=0;i<CELLS_PER_PAGE;i++){
         var cell = document.createElement('div'); cell.className = 'cell'; cell.dataset.index = i; cell.tabIndex = 0;
         cell.setAttribute('role','gridcell');
@@ -1685,7 +1740,7 @@
       p.appendChild(cutLayer);
       pageWrap.appendChild(p);
 
-      var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, cutMarksLayer: cutLayer };
+      var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, bleedBoxes: bleedBoxes, cutMarksLayer: cutLayer };
       wireGridEvents(model);
       layoutPage(model);
       applyCutMarksToModel(model, !!(toggleCutMarks && toggleCutMarks.checked));
@@ -2099,9 +2154,11 @@
     function renderCell(model, i){
       const cell = model.cells[i];
       cell.innerHTML='';
+      const bleedBox = model.bleedBoxes[i];
       const data = model.items[i];
 
       if(!data){
+        cell.classList.remove('filled'); bleedBox.classList.remove('filled');
         cell.setAttribute('aria-label','Empty cell ' + (i+1));
         const ph=document.createElement('div'); ph.className='placeholder'; ph.textContent='Cell ' + (i+1);
         cell.appendChild(ph);
@@ -2109,6 +2166,7 @@
       }
 
       cell.setAttribute('aria-label','Occupied cell ' + (i+1));
+      cell.classList.add('filled'); bleedBox.classList.add('filled');
       const el=document.createElement('img');
       el.alt = '';
       el.draggable = false;
@@ -2118,6 +2176,9 @@
       el.onload = function(){
         if (data.__renderToken !== token) return;
         fitImage(el);
+        const color = sampleBorderColor(el);
+        bleedBox.style.background = color;
+        cell.style.setProperty('--bleed-color', color);
       };
       cell.appendChild(el);
 
