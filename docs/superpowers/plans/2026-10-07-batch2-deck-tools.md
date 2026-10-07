@@ -310,7 +310,7 @@ In `backfillCardFaces`, replace `waiting.forEach(function(item){ item.back = ima
       put(0, itemFor(boltA)); put(1, itemFor(delver)); put(2, up); put(3, itemFor(boltB));
       put(4, createUrlItem('https://example.invalid/art/x.png'));
       put(5, await cloneItem(up)); put(6, up2);
-      put(7, createUrlItem(makeCardImages(delver).back));   // back face placed as its own card
+      put(7, createUrlItem(makeCardImages(delver).back, { name: delver.name, back: null }));   // back face placed by "Add missing DFC backs" (carries the front's name)
       put(10, itemFor(boltA));                               // page 2
       const rows = deckRows();
       ok('row order', rows.map(r => r.label).join(' | ') === 'Lightning Bolt | Delver of Secrets // Insectile Aberration | Your image 1 | Image from example.invalid | Your image 2 | Back face of Delver of Secrets // Insectile Aberration', rows.map(r => r.label).join(' | '));
@@ -322,6 +322,7 @@ In `backfillCardFaces`, replace `waiting.forEach(function(item){ item.back = ima
       ok('upload copy joins its original', rows[2].count === 2 && rows[2].positions.join() === '2,5', rows[2].positions.join());
       ok('uploads and links cannot pick art', !rows[2].canPickArt && !rows[3].canPickArt && !rows[5].canPickArt, '');
       ok('single art reported as 1', rows[1].arts === 1, rows[1].arts);
+      ok('back face does not join the front row', rows[1].count === 1 && rows[1].canPickArt === true, rows[1].count + ' / ' + rows[1].canPickArt);
       const t = deckTotals();
       ok('totals', t.cards === 9 && t.pages === 2, JSON.stringify(t));
       ok('totals text', deckTotalsText() === '9 cards · 2 pages', deckTotalsText());
@@ -360,12 +361,16 @@ In `backfillCardFaces`, replace `waiting.forEach(function(item){ item.back = ima
       try { return new URL(url).host || 'another site'; } catch(_){ return 'another site'; }
     }
 
+    const SCRYFALL_BACK_IMAGE_RE = /^https:\/\/cards\.scryfall\.io\/[a-z_]+\/back\//i;
+
     // The row a card belongs to. `backNames` maps placed DFCs' back-face URLs to the card's name.
+    // Back faces are recognised before names: "Add missing DFC backs" gives them the front's name,
+    // and they must not join (and disable ⇄ for) the front's row.
     function deckGroupOf(item, backNames){
       if (item.type === 'stored') return { key: 'upload:' + (item.copyOf || item.key), kind: 'upload', label: '' };
-      if (item.name) return { key: 'card:' + foldName(item.name), kind: 'card', label: item.name };
-      const backOf = backNames.get(imageUrlKey(item.url));
+      const backOf = backNames.get(imageUrlKey(item.url)) || (SCRYFALL_BACK_IMAGE_RE.test(item.url) ? (item.name || 'a double-faced card') : null);
       if (backOf) return { key: 'back:' + foldName(backOf), kind: 'back', label: 'Back face of ' + backOf };
+      if (item.name) return { key: 'card:' + foldName(item.name), kind: 'card', label: item.name };
       const id = scryfallIdOf(item);
       if (id) return { key: 'id:' + id, kind: 'card', label: 'Scryfall card', needsName: true };
       return { key: 'link:' + imageUrlKey(item.url), kind: 'link', label: 'Image from ' + hostOf(item.url) };
@@ -416,7 +421,7 @@ In `backfillCardFaces`, replace `waiting.forEach(function(item){ item.back = ima
 
 (`countOf`, `foldName`, `imageUrlKey`, `SCRYFALL_FRONT_IMAGE_RE`, `itemAtPos` and `totalPositions` already exist. `countOf` is a function declaration in the PDF section, so it's available here.)
 
-- [ ] **Step 4: Run `tests-deck-rows.js` — expect all PASS (13).** Run the regression runner.
+- [ ] **Step 4: Run `tests-deck-rows.js` — expect all PASS (14).** Run the regression runner.
 
 - [ ] **Step 5: Commit** — `feat: group the layout's cards into deck rows (B2-T2)`.
 
@@ -1557,7 +1562,7 @@ Grep the whole file for any other user-facing "Decklist" wording that refers to 
 - [ ] **Step 2: README.** Read `README.md` (LF line endings). Replace the feature bullet(s) about the decklist with a short **Deck panel** section in the README's existing style: Deck button and side panel, rows with counts, + / −, hover/click, ⇄ art picker and Change printing…, Add tokens…, Paste decklist… inside the panel. Keep it concise.
 
 - [ ] **Step 3: Final verification** (fresh page load for each suite):
-  - New suites: `tests-deck-data.js` (18), `tests-deck-rows.js` (13), `tests-deck-panel.js` (23), `tests-deck-plusminus.js` (13), `tests-art-picker.js` (28), `tests-tokens.js` (14).
+  - New suites: `tests-deck-data.js` (18), `tests-deck-rows.js` (14), `tests-deck-panel.js` (23), `tests-deck-plusminus.js` (13), `tests-art-picker.js` (28), `tests-tokens.js` (14).
   - Regression runner (102) and every batch 1 suite.
   - Console: no `TypeError`/`ReferenceError`.
   - Real-print gate (0 / 488 / 599 / 0) and the panel-open comparison from Task 3 Step 7.
