@@ -3839,6 +3839,45 @@
       removeGapsBtn.addEventListener('click', removeGaps);
     }
 
+    /* ===== Ripple insert / remove =====
+       Positions run in reading order across all pages (page 1 cell 1 ... last page cell 9). Cards are
+       moved, never cloned, so uploaded images keep their stored data. */
+    function posToSlot(p){ return { page: Math.floor(p / CELLS_PER_PAGE), index: p % CELLS_PER_PAGE }; }
+    function totalPositions(){ return pages.length * CELLS_PER_PAGE; }
+    function itemAtPos(p){ const s = posToSlot(p); return pages[s.page] ? pages[s.page].items[s.index] : null; }
+    function setItemAtPos(p, item){ const s = posToSlot(p); pages[s.page].items[s.index] = item; renderCell(pages[s.page], s.index); }
+
+    // Puts `item` at position p. If p is taken, the cards from p up to the next empty cell each move
+    // forward one cell; with no empty cell after p, a page is added at the end. Returns the slot.
+    function rippleInsert(p, item){
+      clearInternalClipboard();
+      let e = p;
+      while (e < totalPositions() && itemAtPos(e)) e++;
+      if (e >= totalPositions()) appendPageSlot();
+      for (let q = e; q > p; q--) setItemAtPos(q, itemAtPos(q - 1));
+      setItemAtPos(p, item);
+      saveState();
+      return posToSlot(p);
+    }
+
+    // Removes (and discards) the card at p; the cards after it, up to the next empty cell, each move
+    // back one cell. Pages left empty at the end are removed (one page always remains).
+    function rippleRemove(p){
+      const removed = itemAtPos(p);
+      if (!removed) return false;
+      clearInternalClipboard();
+      // Stop the removed card's pending image load from clearing whichever card takes its cell.
+      removed.__renderToken = null;
+      discardItem(removed);
+      let q = p;
+      while (q + 1 < totalPositions() && itemAtPos(q + 1)){ setItemAtPos(q, itemAtPos(q + 1)); q++; }
+      setItemAtPos(q, null);
+      while (pages.length > 1 && !pages[pages.length - 1].items.some(Boolean)){ pages.pop().pageEl.remove(); }
+      syncCutMarksState();
+      showPage(Math.min(currentPage, pages.length - 1));   // also saves state
+      return true;
+    }
+
     /* ===== Export / Import ===== */
     var exportBtn = document.getElementById('exportBtn');
     var importFileInput = document.getElementById('importFileInput');
