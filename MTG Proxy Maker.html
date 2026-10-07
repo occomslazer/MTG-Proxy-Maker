@@ -3902,17 +3902,17 @@
         const k = imageUrlKey(item.url);
         let entry = fronts.get(k);
         if (!entry){
-          entry = { name: item.name || 'A double-faced card', backUrl: item.back, frontCount: 0 };
+          entry = { name: item.name || 'A double-faced card', backUrl: item.back, set: item.set || null, collectorNumber: item.collectorNumber || null, frontCount: 0 };
           fronts.set(k, entry);
         }
         entry.frontCount++;
       }
-      const backsNeeded = []; // {name, backUrl, deficit, frontCount}
+      const backsNeeded = []; // {name, backUrl, set, collectorNumber, deficit, frontCount}
       for (const entry of fronts.values()){
         const backCount = urlCounts.get(imageUrlKey(entry.backUrl)) || 0;
         const deficit = entry.frontCount - backCount;
         if (deficit > 0){
-          backsNeeded.push({ name: entry.name, backUrl: entry.backUrl, deficit: deficit, frontCount: entry.frontCount });
+          backsNeeded.push({ name: entry.name, backUrl: entry.backUrl, set: entry.set, collectorNumber: entry.collectorNumber, deficit: deficit, frontCount: entry.frontCount });
         }
       }
 
@@ -3953,7 +3953,7 @@
       const placement = createPlacement();
       for (const entry of toAdd){
         // A placed back face has no further face to add.
-        if (!await addImageSrcToNextCell(entry.backUrl, { name: entry.name, back: null }, placement)) continue;
+        if (!await addImageSrcToNextCell(entry.backUrl, { name: entry.name, back: null, set: entry.set, collectorNumber: entry.collectorNumber }, placement)) continue;
         placed++;
         setStatus('(' + placed + '/' + toAdd.length + ') Adding DFC backs…');
         if (placed % 16 === 0){
