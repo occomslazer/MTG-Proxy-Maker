@@ -1603,13 +1603,21 @@
     function loadPrintSettings(){
       const saved = readSavedTuning();
       const t = saved || {};
-      const s = Object.assign({}, PRINT_DEFAULTS);
-      if (Object.prototype.hasOwnProperty.call(PAPER_SIZES, t.paper)) s.paper = t.paper;
-      else {
+      const s = printSettingsFrom(t);
+      if (!Object.prototype.hasOwnProperty.call(PAPER_SIZES, t.paper)){
         let returning = !!saved;
         try{ returning = returning || !!localStorage.getItem('mtgProxyPages') || localStorage.getItem('mtgThemeDark') !== null; }catch(_){}
         s.paper = returning ? 'letter' : regionPaper();
       }
+      printSettings = s;
+      if (t.paper !== s.paper) savePrintSettings({ paper: s.paper });
+      return printSettings;
+    }
+
+    // Print settings from a saved tuning object; invalid or missing values fall back to defaults.
+    function printSettingsFrom(t){
+      const s = Object.assign({}, PRINT_DEFAULTS);
+      if (Object.prototype.hasOwnProperty.call(PAPER_SIZES, t.paper)) s.paper = t.paper;
       if (GAP_CHOICES_MM.includes(t.gapMm)) s.gapMm = t.gapMm;
       if (BLEED_CHOICES_MM.includes(t.bleedMm)) s.bleedMm = t.bleedMm;
       if (CUT_STYLES.includes(t.cutStyle)) s.cutStyle = t.cutStyle;
@@ -1620,20 +1628,22 @@
       // To 0.01 in, like the printer offsets and as the dialog saves them.
       if (typeof t.backOffsetXIn === 'number' && isFinite(t.backOffsetXIn)) s.backOffsetXIn = +t.backOffsetXIn.toFixed(2);
       if (typeof t.backOffsetYIn === 'number' && isFinite(t.backOffsetYIn)) s.backOffsetYIn = +t.backOffsetYIn.toFixed(2);
-      printSettings = s;
-      if (t.paper !== s.paper) savePrintSettings({});
       return s;
     }
 
+    // Saves the given print settings only, merged into what is saved now: another tab may have changed
+    // other settings (or replaced the card back) since this one loaded them, and this tab's older copy
+    // must not write them back. This tab's settings then follow the merged result.
     function savePrintSettings(patch){
-      Object.assign(printSettings, patch || {});
+      const saved = readSavedTuning();
+      // Nothing saved yet (or storage unavailable): start from the settings in effect.
+      const merged = Object.assign({}, saved || printSettings, patch || {});
+      // The paper in effect is kept when none is saved (a first visit's region default).
+      if (!Object.prototype.hasOwnProperty.call(PAPER_SIZES, merged.paper)) merged.paper = printSettings.paper;
       // Corners need a gap; with none they'd draw nothing, so fall back to Ticks.
-      if (printSettings.cutStyle === 'corners' && !(printSettings.gapMm > 0)) printSettings.cutStyle = 'ticks';
-      try{
-        const prev = readSavedTuning() || {};
-        Object.keys(PRINT_DEFAULTS).forEach(function(k){ prev[k] = printSettings[k]; });
-        localStorage.setItem('mtgTuning', JSON.stringify(prev));
-      }catch(_){}
+      if (merged.cutStyle === 'corners' && !(printSettingsFrom(merged).gapMm > 0)) merged.cutStyle = 'ticks';
+      try{ localStorage.setItem('mtgTuning', JSON.stringify(merged)); }catch(_){}
+      printSettings = printSettingsFrom(merged);
     }
 
     /* ===== Layout calculator ===== */
@@ -4032,8 +4042,12 @@
           }catch(_){
             url = DEFAULT_BACK_URL;
             if ((printSettings.backImageKey || null) === key){
-              savePrintSettings({ backImageKey: null });
-              setStatus('Your uploaded card back wasn\'t available; using the default back');
+              if (savedBackKey() === key){
+                savePrintSettings({ backImageKey: null });
+                setStatus('Your uploaded card back wasn\'t available; using the default back');
+              } else {
+                savePrintSettings({});   // another tab replaced it: pick up the saved one
+              }
             }
           }
         }
@@ -4300,16 +4314,23 @@
        deleting, open tabs are asked whether an upload is still their draft, so another tab's draft is
        never touched. */
     let tuneBackKey = null;          // the card back chosen in the dialog; null = the default
+    let tuneBackChanged = false;     // whether the dialog changed the card back (Upload or Reset)
     let tunePendingBackKey = null;   // an upload that is stored but not saved
     let tuneSession = 0;             // bumped when the dialog closes, so late work from it is dropped
     let backUploadToken = 0;         // the latest upload chosen; an earlier one finishing later is dropped
     const PENDING_BACKS = 'mtgPendingBackKeys';      // JSON list of pending uploads, every tab's
     const OLD_PENDING_BACK = 'mtgPendingBackKey';    // single records kept by earlier versions
-    const backDraftChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('mtg-proxy-back-draft') : null;
+    let backDraftChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('mtg-proxy-back-draft') : null;
+    // Another tab asks before deleting an upload: claim every card back this tab is using (its pending
+    // upload, the dialog's choice, the saved back it prints with), so nothing in use is deleted even
+    // if the shared list is out of date.
+    function backKeyInUse(key){
+      return !!key && (key === tunePendingBackKey || key === tuneBackKey || key === printSettings.backImageKey);
+    }
     if (backDraftChannel){
       backDraftChannel.addEventListener('message', function(e){
         const m = e.data || {};
-        if (m.type === 'claimed?' && m.key && m.key === tunePendingBackKey) backDraftChannel.postMessage({ type: 'claimed', key: m.key });
+        if (m.type === 'claimed?' && backKeyInUse(m.key)) backDraftChannel.postMessage({ type: 'claimed', key: m.key });
       });
     }
 
@@ -4346,7 +4367,8 @@
     // At start-up: uploads on the list that no open tab claims as its draft (their tab closed or
     // reloaded with the dialog open) are deleted, after a second's wait for the answers; the start-up
     // doesn't wait for it. The saved card back is never deleted. Records an earlier version kept (one
-    // key, in localStorage or this tab's sessionStorage) go through the same check.
+    // key, in localStorage or this tab's sessionStorage) go through the same check. Without a way to
+    // ask the other tabs nothing is deleted: a leftover file is better than deleting one in use.
     function discardLeftoverPendingBack(){
       const old = [];
       try{ const k = localStorage.getItem(OLD_PENDING_BACK); if (k) old.push(k); localStorage.removeItem(OLD_PENDING_BACK); }catch(_){}
@@ -4356,17 +4378,16 @@
       const keys = pendingBackList().filter(function(k){ return k !== tunePendingBackKey; });
       if (saved && keys.indexOf(saved) !== -1) updatePendingBackList([], [saved]);   // saved since: no longer pending
       const candidates = keys.filter(function(k){ return k !== saved; });
-      if (!candidates.length) return;
+      const channel = backDraftChannel;
+      if (!candidates.length || !channel) return;
       const claimed = new Set();
       const listen = function(e){ if (e.data && e.data.type === 'claimed' && e.data.key) claimed.add(e.data.key); };
-      if (backDraftChannel){
-        backDraftChannel.addEventListener('message', listen);
-        candidates.forEach(function(k){ backDraftChannel.postMessage({ type: 'claimed?', key: k }); });
-      }
+      channel.addEventListener('message', listen);
+      candidates.forEach(function(k){ channel.postMessage({ type: 'claimed?', key: k }); });
       setTimeout(function(){
-        if (backDraftChannel) backDraftChannel.removeEventListener('message', listen);
+        channel.removeEventListener('message', listen);
         const savedNow = savedBackKey();
-        const doomed = candidates.filter(function(k){ return !claimed.has(k) && k !== savedNow && k !== printSettings.backImageKey && k !== tunePendingBackKey; });
+        const doomed = candidates.filter(function(k){ return !claimed.has(k) && k !== savedNow && !backKeyInUse(k); });
         updatePendingBackList([], doomed.concat(candidates.filter(function(k){ return k === savedNow; })));
         doomed.forEach(function(k){ Promise.resolve(imageStore.delete(k)).catch(function(){}); });
       }, 1000);
@@ -4430,12 +4451,14 @@
       discardPendingBack();
       setPendingBack(stored.key);
       tuneBackKey = stored.key;
+      tuneBackChanged = true;
       showTuneBackThumb();
     });
     document.getElementById('backImageReset').addEventListener('click', function(){
       backUploadToken++;
       discardPendingBack();
       tuneBackKey = null;
+      tuneBackChanged = true;
       showTuneBackThumb();
     });
     // Closing without saving (Close, Esc, backdrop) drops an unsaved upload and abandons a Save that
@@ -5399,7 +5422,7 @@
         fitMode: savedFitMode, scaleLock: typeof saved.scaleLock === 'undefined' ? true : !!saved.scaleLock
       });
       const keys = ['paper','gapMm','bleedMm','cutStyle','duplex','dfcOnBack','backOffsetXIn','backOffsetYIn','topIn','leftIn','cardWIn','cardHIn','fitMode','scaleLock'];
-      const mineBack = printSettings.backImageKey || null;
+      const mineBack = savedBackKey();   // as saved now; another tab may have replaced it
       // The file's card back: a file without the field leaves ours alone; one whose image isn't here
       // (a lightweight export) would print the default back. The same image under another storage key
       // (it is re-stored on import) is the same back.
@@ -5421,7 +5444,7 @@
       if (use){
         try {
           // loadTuning() checks the result fits the page, as for any saved settings.
-          localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, saved, theirs, { backImageKey: theirsBack })));
+          localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, readSavedTuning() || {}, theirs, { backImageKey: theirsBack })));
           loadTuning();
         } catch(_){}
       }
@@ -5779,7 +5802,9 @@
       duplexToggle.checked = !!printSettings.duplex;
       tuneBackX.value = (printSettings.backOffsetXIn || 0).toFixed(2);
       tuneBackY.value = (printSettings.backOffsetYIn || 0).toFixed(2);
-      tuneBackKey = printSettings.backImageKey || null;
+      // The saved back as it is now (another tab may have replaced it).
+      tuneBackKey = savedBackKey();
+      tuneBackChanged = false;
       showTuneBackThumb();
       tuneModal.querySelector('details.fine-tuning').open = false;
       if (fitModeSelect) fitModeSelect.value = savedFitMode;
@@ -5855,11 +5880,15 @@
         }
 
         savedFitMode = (fitModeSelect && fitModeSelect.value === 'contain') ? 'contain' : 'cover';
-        const oldBack = printSettings.backImageKey || null, newBack = tuneBackKey;
+        // The card back and the DFC answer are saved only when this dialog changed them, so an older
+        // copy here can't undo another tab's.
+        const oldBack = savedBackKey(), newBack = tuneBackChanged ? tuneBackKey : oldBack;
         setPendingBack(null);   // saved now, so closing the dialog keeps it
-        savePrintSettings({ paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle,
-                            backOffsetXIn: draft.backOffsetXIn, backOffsetYIn: draft.backOffsetYIn,
-                            duplex: duplex, dfcOnBack: answers ? answers.dfcOnBack : printSettings.dfcOnBack, backImageKey: newBack });
+        const patch = { paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle,
+                        backOffsetXIn: draft.backOffsetXIn, backOffsetYIn: draft.backOffsetYIn, duplex: duplex };
+        if (tuneBackChanged) patch.backImageKey = newBack;
+        if (answers) patch.dfcOnBack = answers.dfcOnBack;
+        savePrintSettings(patch);
         applyTuning(draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn);
 
         // Persist scaleLock and fitMode merged with other tuning
