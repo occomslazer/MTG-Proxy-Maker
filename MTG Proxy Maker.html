@@ -1485,6 +1485,128 @@
       }catch(_){}
     }
 
+    /* ===== Layout calculator ===== */
+    // Match the CSS variables --cut-mark-length / --cut-mark-inset / --cut-mark-thickness.
+    const CUT_MARK = { lengthIn: 0.18, insetIn: 0.05, thicknessIn: 0.0125 };
+    const CORNER_ARM_MAX_IN = 3 / MM_PER_IN;
+
+    // The calculator's inputs, gathered from printer tuning and print settings.
+    function currentLayoutSettings(){
+      return {
+        paper: printSettings.paper, gapMm: printSettings.gapMm, bleedMm: printSettings.bleedMm, cutStyle: printSettings.cutStyle,
+        topIn: readInchesVar('--grid-top', 0.25), leftIn: readInchesVar('--grid-left', 0),
+        cardWIn: readInchesVar('--cell-w', 2.475), cardHIn: readInchesVar('--cell-h', 3.465),
+        backOffsetXIn: printSettings.backOffsetXIn, backOffsetYIn: printSettings.backOffsetYIn
+      };
+    }
+
+    // Every position on a printed sheet, in inches from the page's top-left corner. Screen, print and
+    // PDF all draw from this, so they can't disagree. cards[i] is reading-order cell i; backCards[i] is
+    // where that card's back lands on the back page (mirrored for a long-edge flip).
+    function computeLayout(s){
+      s = s || currentLayoutSettings();
+      const page = PAPER_SIZES[s.paper] || PAPER_SIZES.letter;
+      const w = s.cardWIn, h = s.cardHIn, b = s.bleedMm / MM_PER_IN, g = s.gapMm / MM_PER_IN;
+      const bw = w + 2 * b, bh = h + 2 * b;
+      const grid = { w: cols * bw + (cols - 1) * g, h: rows * bh + (rows - 1) * g };
+      grid.x = (page.w - grid.w) / 2 + s.leftIn;
+      grid.y = s.topIn;
+      const mirror = function(box){
+        return { x: page.w - box.x - box.w + (s.backOffsetXIn || 0), y: box.y + (s.backOffsetYIn || 0), w: box.w, h: box.h };
+      };
+      const cards = [], backCards = [];
+      for (let r = 0; r < rows; r++){
+        for (let c = 0; c < cols; c++){
+          const bleed = { x: grid.x + c * (bw + g), y: grid.y + r * (bh + g), w: bw, h: bh };
+          const trim = { x: bleed.x + b, y: bleed.y + b, w: w, h: h };
+          cards.push({ trim: trim, bleed: bleed });
+          backCards.push({ trim: mirror(trim), bleed: mirror(bleed) });
+        }
+      }
+      return {
+        page: { w: page.w, h: page.h }, grid: grid, bleedIn: b, gapIn: g, cards: cards, backCards: backCards,
+        cutMarks: cutMarkRects(s.cutStyle, cards, grid, page, g),
+        problem: layoutProblem(s, page, grid, b, g)
+      };
+    }
+
+    function uniqueSorted(values){
+      return values.slice().sort(function(a, b){ return a - b; }).filter(function(v, i, a){ return i === 0 || Math.abs(v - a[i - 1]) > 1e-9; });
+    }
+
+    // Cut marks as thin rectangles, in page inches.
+    function cutMarkRects(style, cards, grid, page, g){
+      const T = CUT_MARK.thicknessIn, L = CUT_MARK.lengthIn, I = CUT_MARK.insetIn;
+      const xs = uniqueSorted(cards.reduce(function(a, c){ return a.concat([c.trim.x, c.trim.x + c.trim.w]); }, []));
+      const ys = uniqueSorted(cards.reduce(function(a, c){ return a.concat([c.trim.y, c.trim.y + c.trim.h]); }, []));
+      const marks = [];
+      if (style === 'full'){
+        // Along every cut line across the page, stopping wherever the line would touch a card.
+        const free = function(lo, hi, blocked){
+          blocked.sort(function(a, b){ return a[0] - b[0]; });
+          const out = []; let at = lo;
+          blocked.forEach(function(iv){ if (iv[0] > at) out.push([at, iv[0]]); at = Math.max(at, iv[1]); });
+          if (at < hi) out.push([at, hi]);
+          return out.filter(function(iv){ return iv[1] - iv[0] > 1e-6; });
+        };
+        xs.forEach(function(x){
+          const blocked = cards.filter(function(c){ return x + T / 2 > c.bleed.x && x - T / 2 < c.bleed.x + c.bleed.w; })
+                               .map(function(c){ return [c.bleed.y, c.bleed.y + c.bleed.h]; });
+          free(0, page.h, blocked).forEach(function(iv){ marks.push({ x: x - T / 2, y: iv[0], w: T, h: iv[1] - iv[0] }); });
+        });
+        ys.forEach(function(y){
+          const blocked = cards.filter(function(c){ return y + T / 2 > c.bleed.y && y - T / 2 < c.bleed.y + c.bleed.h; })
+                               .map(function(c){ return [c.bleed.x, c.bleed.x + c.bleed.w]; });
+          free(0, page.w, blocked).forEach(function(iv){ marks.push({ x: iv[0], y: y - T / 2, w: iv[1] - iv[0], h: T }); });
+        });
+        return marks;
+      }
+      if (style === 'corners'){
+        if (!(g > 0)) return marks;
+        const arm = Math.min(CORNER_ARM_MAX_IN, g / 2);
+        cards.forEach(function(c){
+          [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(d){
+            const tx = d[0] < 0 ? c.trim.x : c.trim.x + c.trim.w, ty = d[1] < 0 ? c.trim.y : c.trim.y + c.trim.h;
+            const bx = d[0] < 0 ? c.bleed.x : c.bleed.x + c.bleed.w, by = d[1] < 0 ? c.bleed.y : c.bleed.y + c.bleed.h;
+            marks.push({ x: d[0] < 0 ? bx - arm : bx, y: ty - T / 2, w: arm, h: T });   // horizontal arm
+            marks.push({ x: tx - T / 2, y: d[1] < 0 ? by - arm : by, w: T, h: arm });   // vertical arm
+          });
+        });
+        return marks;
+      }
+      // Ticks: exactly today's marks — 0.18" long, from 0.13" outside the grid edge to 0.05" inside it.
+      xs.forEach(function(x){
+        marks.push({ x: x - T / 2, y: grid.y + I - L, w: T, h: L });
+        marks.push({ x: x - T / 2, y: grid.y + grid.h - I, w: T, h: L });
+      });
+      ys.forEach(function(y){
+        marks.push({ x: grid.x + I - L, y: y - T / 2, w: L, h: T });
+        marks.push({ x: grid.x + grid.w - I, y: y - T / 2, w: L, h: T });
+      });
+      return marks;
+    }
+
+    // Why a layout can't be printed, in words, or '' when it fits on the page.
+    function layoutProblem(s, page, grid, b, g){
+      if (![s.topIn, s.leftIn, s.cardWIn, s.cardHIn].every(isFinite)) return 'Enter a number in every field.';
+      if (s.cardWIn <= 0 || s.cardHIn <= 0) return 'Card width and height must be greater than zero.';
+      if (s.topIn < 0) return 'Top margin can\'t be negative.';
+      const fmt = function(v){ return String(Math.round(v * 100) / 100); };
+      const extras = (b > 0 ? ' + bleed' : '') + (g > 0 ? ' + gaps' : '');
+      const neededH = s.topIn + grid.h;
+      if (neededH > page.h + 1e-6){
+        return 'Cards this tall don\'t fit: ' + rows + ' rows × ' + s.cardHIn.toFixed(3) + '″' + extras + ' + ' + s.topIn.toFixed(2) +
+          '″ top margin = ' + neededH.toFixed(2) + '″, but the page is ' + fmt(page.h) + '″ tall.';
+      }
+      const neededW = grid.w + 2 * Math.abs(s.leftIn);
+      if (neededW > page.w + 1e-6){
+        return 'Cards this wide don\'t fit: ' + cols + ' columns × ' + s.cardWIn.toFixed(3) + '″' + extras +
+          (s.leftIn ? ' shifted ' + Math.abs(s.leftIn).toFixed(2) + '″' : '') + ' need ' + neededW.toFixed(2) +
+          '″, but the page is ' + fmt(page.w) + '″ wide.';
+      }
+      return '';
+    }
+
     /* ===== Model ===== */
     var pages = []; // {items:Array(9), pageEl, gridEl, cells[]}
     var currentPage = 0;
@@ -4109,22 +4231,7 @@
 
     // Why a tuning can't be used, in words, or '' when the grid fits on the page.
     function tuningProblem(topIn, leftIn, cardWIn, cardHIn){
-      const pageW = readInchesVar('--page-w', 8.5), pageH = readInchesVar('--page-h', 11);
-      if (![topIn, leftIn, cardWIn, cardHIn].every(isFinite)) return 'Enter a number in every field.';
-      if (cardWIn <= 0 || cardHIn <= 0) return 'Card width and height must be greater than zero.';
-      if (topIn < 0) return 'Top margin can\'t be negative.';
-      const neededH = topIn + rows * cardHIn;
-      if (neededH > pageH + 1e-6){
-        return 'Cards this tall don\'t fit: ' + rows + ' rows × ' + cardHIn.toFixed(3) + '″ + ' + topIn.toFixed(2) +
-          '″ top margin = ' + neededH.toFixed(2) + '″, but the page is ' + pageH + '″ tall.';
-      }
-      const neededW = cols * cardWIn + 2 * Math.abs(leftIn);
-      if (neededW > pageW + 1e-6){
-        return 'Cards this wide don\'t fit: ' + cols + ' columns × ' + cardWIn.toFixed(3) + '″' +
-          (leftIn ? ' shifted ' + Math.abs(leftIn).toFixed(2) + '″' : '') + ' need ' + neededW.toFixed(2) +
-          '″, but the page is ' + pageW + '″ wide.';
-      }
-      return '';
+      return computeLayout(Object.assign(currentLayoutSettings(), { topIn: topIn, leftIn: leftIn, cardWIn: cardWIn, cardHIn: cardHIn })).problem;
     }
 
     function loadTuning(){
