@@ -3847,9 +3847,12 @@
     function itemAtPos(p){ const s = posToSlot(p); return pages[s.page] ? pages[s.page].items[s.index] : null; }
     function setItemAtPos(p, item){ const s = posToSlot(p); pages[s.page].items[s.index] = item; renderCell(pages[s.page], s.index); }
 
-    // Puts `item` at position p. If p is taken, the cards from p up to the next empty cell each move
-    // forward one cell; with no empty cell after p, a page is added at the end. Returns the slot.
+    // Puts `item` at position p (0 to totalPositions(); the end appends a page). If p is taken, the
+    // cards from p up to the next empty cell each move forward one cell; with no empty cell after p, a
+    // page is added at the end. A bad p throws a RangeError before anything changes. `item` must not
+    // already be placed elsewhere. Returns the slot.
     function rippleInsert(p, item){
+      if (!Number.isInteger(p) || p < 0 || p > totalPositions()) throw new RangeError('rippleInsert: bad position ' + p);
       clearInternalClipboard();
       let e = p;
       while (e < totalPositions() && itemAtPos(e)) e++;
@@ -3861,8 +3864,12 @@
     }
 
     // Removes (and discards) the card at p; the cards after it, up to the next empty cell, each move
-    // back one cell. Pages left empty at the end are removed (one page always remains).
+    // back one cell. Returns false, changing nothing, when p is not a position holding a card. If that
+    // empties the last page (and it isn't the only page), the page is removed; blank pages the user
+    // added earlier stay. To remove several cards, go from the highest position down. Each call does a
+    // full showPage/doUpdate, so a batch caller should get a batch variant rather than looping.
     function rippleRemove(p){
+      if (!Number.isInteger(p) || p < 0 || p >= totalPositions()) return false;
       const removed = itemAtPos(p);
       if (!removed) return false;
       clearInternalClipboard();
@@ -3872,9 +3879,11 @@
       let q = p;
       while (q + 1 < totalPositions() && itemAtPos(q + 1)){ setItemAtPos(q, itemAtPos(q + 1)); q++; }
       setItemAtPos(q, null);
-      while (pages.length > 1 && !pages[pages.length - 1].items.some(Boolean)){ pages.pop().pageEl.remove(); }
-      syncCutMarksState();
-      showPage(Math.min(currentPage, pages.length - 1));   // also saves state
+      const emptied = posToSlot(q).page;
+      if (pages.length > 1 && emptied === pages.length - 1 && !pages[emptied].items.some(Boolean)){
+        pages.pop().pageEl.remove();
+      }
+      showPage(Math.min(currentPage, pages.length - 1));   // also syncs cut marks and saves
       return true;
     }
 
