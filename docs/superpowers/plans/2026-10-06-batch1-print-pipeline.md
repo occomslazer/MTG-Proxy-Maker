@@ -834,7 +834,9 @@ In `function doUpdate(){` make `applyLayout();` the first statement (before `ref
 node .claude/tests/print-harness.mjs "http://127.0.0.1:8765/MTG%20Proxy%20Maker.html" .claude/tests/print-out --geometry one-page-plain two-pages-cuts tuned-full-size letter-gap2-full a4-plain a4-gap2-corners
 ```
 
-Expected: every line ends `PASS` with max deviation ≤ 0.001″, sheets equal to front pages, page `612x792pt` (Letter) or `595.28x841.89pt` (A4) `ok`. Delete `.claude/tests/print-out`.
+Expected: every line ends `PASS` with max deviation ≤ 0.001″, sheets equal to front pages, page `612x792pt` (Letter) or `594.96x841.92pt` (A4 — Chrome's own rounding of 595.28×841.89; any CSS spelling of A4 gives the same, and the harness allows ±0.5 pt) `ok`. Delete `.claude/tests/print-out`.
+
+> **As built (review notes):** Chrome's print rasteriser snaps untransformed boxes to whole CSS pixels but not transforms, so to print exactly as the old layout did the horizontal printer offset is applied as `translateX` on the grid and marks layer, and marks are centred with `translate(-50%)`. `layoutPage(model, layout, key)` skips pages whose settings key is unchanged and refits every page's images when it changes; there is no `currentLayout` cache — always call `computeLayout()` (or use `applyLayout()`'s return value). Card guides are outlines, not borders. Later tasks must adapt their `layoutPage`/`createPage` edits to this code.
 
 - [ ] **Step 8: Commit** — `feat: pages drawn from the layout calculator (Letter/A4, gaps, cut-line styles)`.
 
@@ -1715,7 +1717,7 @@ and add a choice dialog right after the closing `</div>` of `#tuneModal`:
     // Only changed images are reloaded, so printing straight after is safe.
     async function syncBackPages(){
       await resolveBackImage();
-      const layout = currentLayout || computeLayout();
+      const layout = computeLayout();
       const live = new Set();
       if (printSettings.duplex){
         pages.forEach(function(model, pi){
@@ -2204,7 +2206,7 @@ and in the same function, after `setupModalBackdrop(exportModal);`, add:
 
     // What pdf-check.py expects for the current layout (used by the test harness).
     async function pdfExpectations(){
-      const layout = currentLayout || computeLayout(), PT = 72, fit = fitModeSelect.value;
+      const layout = computeLayout(), PT = 72, fit = fitModeSelect.value;
       const sheets = await sheetSources(), dims = new Map();
       for (const s of sheets) for (const c of s.cells){
         if (!c || dims.has(c.src)) continue;
@@ -2251,7 +2253,7 @@ node .claude/tests/print-harness.mjs "http://127.0.0.1:8765/MTG%20Proxy%20Maker.
 for s in two-pages-cuts a4-gap2-bleed1 letter-duplex; do .claude/tests/.venv/Scripts/python .claude/tests/pdf-check.py .claude/tests/print-out/$s-export.pdf .claude/tests/print-out/$s-export.json; done
 ```
 
-Expected: three `PASS` lines; `letter-duplex` shows 4 pages; distinct images = 11 cards + 1 back = 12. Render page 1 of `two-pages-cuts-export.pdf` and of the print PDF `two-pages-cuts.pdf` at 100 DPI and view both side by side (screenshots) to confirm they look the same. Delete `.claude/tests/print-out`. Run the regression suites and the real-print baseline gate.
+Expected: three `PASS` lines; `letter-duplex` shows 4 pages; distinct images = 11 cards + 1 back = 12. (Print and PDF can differ by up to ~0.005″: Chrome snaps printed boxes to whole CSS pixels while the PDF uses exact calculator positions — accepted.) Render page 1 of `two-pages-cuts-export.pdf` and of the print PDF `two-pages-cuts.pdf` at 100 DPI and view both side by side (screenshots) to confirm they look the same. Delete `.claude/tests/print-out`. Run the regression suites and the real-print baseline gate.
 
 - [ ] **Step 9: Commit** — `git add vendor service-worker.js "MTG Proxy Maker.html"` and commit `feat: PDF export (jsPDF 4.2.1, vendored)`.
 
