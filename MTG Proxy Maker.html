@@ -4670,6 +4670,7 @@
       const activeRow = active && active.closest ? active.closest('.deck-row') : null;
       const focusKey = activeRow ? activeRow.dataset.key : null;
       const focusClass = activeRow ? ['deck-name', 'deck-minus', 'deck-plus', 'deck-art'].find(function(c){ return active.classList.contains(c); }) : null;
+      const focusIndex = activeRow ? Array.prototype.indexOf.call(list.children, activeRow) : -1;
 
       const rows = deckRows();
       deckRowsShown = rows;
@@ -4720,8 +4721,12 @@
         list.appendChild(li);
       });
       if (focusKey){
-        const li = Array.from(list.children).find(function(el){ return el.dataset.key === focusKey; });
-        const target = li && (li.querySelector('.' + focusClass) || li.querySelector('.deck-name'));
+        // The same control of the same row; if that row is gone (its last copy was removed), the same
+        // control of the row now in its place, else the one before it, else Paste decklist. Focus never
+        // falls back to the page body.
+        let li = Array.from(list.children).find(function(el){ return el.dataset.key === focusKey; });
+        if (!li && list.children.length) li = list.children[Math.min(focusIndex, list.children.length - 1)];
+        const target = li ? (li.querySelector('.' + focusClass) || li.querySelector('.deck-name')) : pasteBtn;
         if (target) target.focus();
       }
       // Removing the old rows can drop the hover/focus key (focusout); outline the same row's copies again.
@@ -4741,8 +4746,54 @@
       }
     }
 
-    // Row controls added by later features (+ / −, art picker). Without them a row is name + count.
-    function decorateDeckRow(li, row){}
+    // True while a + is cloning a card: another + or − waits, so nothing is placed by a stale position.
+    var deckBusy = false;
+
+    function deckRowByKey(key){
+      return deckRows().find(function(r){ return r.key === key; }) || null;
+    }
+
+    // + : a copy of the row's last card (same art), right after it; the cards after it shift forward
+    // up to the next empty cell (rippleInsert). An upload's image is copied, and the copy joins the row.
+    async function deckAddCopy(key){
+      if (deckBusy) return false;
+      const row = deckRowByKey(key);
+      if (!row) return false;
+      deckBusy = true;
+      try{
+        const copy = await cloneItem(row.items[row.items.length - 1]);
+        if (!copy){ setStatus('Could not add a copy of ' + row.label); return false; }
+        // Cloning an upload is async: find the row's last copy again in case the layout changed.
+        const now = deckRowByKey(key);
+        if (!now){ discardItem(copy); return false; }
+        const slot = rippleInsert(now.positions[now.positions.length - 1] + 1, copy);
+        setStatus('Added a copy of ' + row.label + describePlacedPages(new Set([slot.page])));
+        return true;
+      } finally { deckBusy = false; }
+    }
+
+    // − : removes the row's last copy; the cards after it shift back up to the next empty cell.
+    async function deckRemoveCopy(key){
+      if (deckBusy) return false;
+      const row = deckRowByKey(key);
+      if (!row) return false;
+      rippleRemove(row.positions[row.positions.length - 1]);
+      setStatus('Removed a copy of ' + row.label);
+      return true;
+    }
+
+    // Row controls: − and + (later features add the art picker).
+    function decorateDeckRow(li, row){
+      const minus = document.createElement('button');
+      minus.type = 'button'; minus.className = 'secondary deck-step deck-minus'; minus.textContent = '−';
+      minus.setAttribute('aria-label', 'Remove a copy of ' + row.label);
+      minus.addEventListener('click', function(){ deckRemoveCopy(row.key); });
+      const plus = document.createElement('button');
+      plus.type = 'button'; plus.className = 'secondary deck-step deck-plus'; plus.textContent = '+';
+      plus.setAttribute('aria-label', 'Add a copy of ' + row.label);
+      plus.addEventListener('click', function(){ deckAddCopy(row.key); });
+      li.append(minus, plus);
+    }
 
     if (deckBtn){
       deckBtn.addEventListener('click', function(){ setDeckPanelOpen(!deckPanelOpen); });
