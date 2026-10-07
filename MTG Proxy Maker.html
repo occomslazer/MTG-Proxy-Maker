@@ -309,6 +309,7 @@
       /* Anything drawn over the pages on screen stays off paper: an open dialog (Ctrl+P works behind
          one), the drag ghost, the focused skip link. Fixed boxes would otherwise print on every sheet. */
       .modal, .drag-ghost, .skip-link { display: none !important; }
+      .deck-panel { display: none !important; }
 
       img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
@@ -460,6 +461,31 @@
       .tune-preview { forced-color-adjust: none; }
     }
 
+    main { gap: 16px; }
+    .deck-panel { flex: none; width: 300px; align-self: stretch; max-height: 100%; margin-bottom: var(--preview-bottom-gap); overflow: auto; box-sizing: border-box;
+      padding: 12px; border: 1px solid #d1d5db; border-radius: 10px; background: #fff; display: flex; flex-direction: column; gap: 10px; }
+    .deck-panel[hidden] { display: none; }
+    .deck-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .deck-totals { font-size: 13px; color: #4b5563; }
+    .deck-empty { margin: 8px 0; font-size: 14px; color: #4b5563; }
+    .deck-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+    .deck-row { display: grid; grid-template-columns: 1fr auto auto auto auto auto; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 6px; }
+    .deck-row:hover, .deck-row:focus-within { background: #eff6ff; }
+    .deck-name { all: unset; cursor: pointer; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .deck-name:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 3px; }
+    .deck-arts { font-size: 12px; color: #6b7280; }
+    .deck-count { font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; font-weight: 600; }
+    .deck-row button.deck-step, .deck-row button.deck-art { padding: 2px 8px; font-size: 14px; line-height: 1.2; }
+    /* Drawn by the cell's overlay (as the focus ring is): an outline would sit under the card image.
+       Screen only and not in preview: these rules come after the print rules, so they must not reach paper. */
+    @media screen {
+      .app:not(.preview-mode) .cell.deck-highlight::after { opacity: 1; box-shadow: inset 0 0 0 3px #2563eb, inset 0 0 0 5px rgba(255,255,255,.9); }
+    }
+    .preview-mode .deck-panel { display: none !important; }
+    :root[data-theme="dark"] .deck-panel { background: #111827; border-color: #374151; }
+    :root[data-theme="dark"] .deck-totals, :root[data-theme="dark"] .deck-empty, :root[data-theme="dark"] .deck-arts { color: #9ca3af; }
+    :root[data-theme="dark"] .deck-row:hover, :root[data-theme="dark"] .deck-row:focus-within { background: #1f2937; }
+
     :root[data-theme="dark"] body { background:#0b0d10; color:#e5e7eb; }
     :root[data-theme="dark"] header { background:#111827; border-bottom-color:#1f2937; }
     :root[data-theme="dark"] .panel { background:#111827; border-color:#1f2937; }
@@ -556,7 +582,7 @@
         <div class="field">
           <input id="cardSearch" type="text" placeholder="Add card by name (Enter)" style="min-width:240px" />
           <button id="addCardBtn" class="secondary">Add</button>
-          <button id="decklistBtn" class="secondary" title="Paste a decklist to auto-fill">Decklist</button>
+          <button id="deckBtn" class="secondary" aria-expanded="false" aria-controls="deckPanel" title="Show your deck: counts, copies, art and tokens">Deck</button>
         </div>
         <div class="status" id="status" role="status" aria-live="polite">Ready</div>
         <div class="spacer"></div>
@@ -565,6 +591,15 @@
 
     <main>
       <div id="pageWrap" class="page-wrap"></div>
+      <aside id="deckPanel" class="deck-panel screen-only" aria-label="Deck" hidden>
+        <div class="deck-actions">
+          <button id="deckPasteBtn" class="secondary" type="button">Paste decklist…</button>
+          <button id="deckTokensBtn" class="secondary" type="button" disabled title="Available once tokens are supported">Add tokens…</button>
+        </div>
+        <div id="deckTotals" class="deck-totals"></div>
+        <p id="deckEmpty" class="deck-empty" hidden>Paste a decklist or add cards to get started.</p>
+        <ul id="deckList" class="deck-list"></ul>
+      </aside>
     </main>
   </div>
 
@@ -715,7 +750,7 @@
     var closeHelpBtn = null;
     var cardSearch = document.getElementById('cardSearch');
     var addCardBtn = document.getElementById('addCardBtn');
-    var decklistBtn = document.getElementById('decklistBtn');
+    var deckBtn = document.getElementById('deckBtn');
     var deckModalRoot = document.getElementById('deckModalRoot');
     var deckModal = null;
     var deckText = null;
@@ -3149,7 +3184,7 @@
       var bottomGapVar=getComputedStyle(document.documentElement).getPropertyValue('--preview-bottom-gap')||'5vh';
       var bottomGapPx=cssSizeToPx(bottomGapVar);
       var availH=Math.max(0, window.innerHeight-headerH-controlsH-appGaps-bottomGapPx);
-      var availW=Math.max(0, window.innerWidth);
+      var availW=Math.max(0, window.innerWidth - deckPanelSpace());
       var pxPerIn = getPxPerIn();
 
       const cs = getComputedStyle(document.documentElement);
@@ -3428,14 +3463,6 @@
       helpBtn.addEventListener('click', function(){
         var modal = ensureHelpModal();
         openModal(modal);
-      });
-    }
-
-    if (decklistBtn){
-      decklistBtn.addEventListener('click', function(){
-        var modal = ensureDeckModal();
-        openModal(modal);
-        if (deckText){ deckText.focus(); }
       });
     }
 
@@ -4546,6 +4573,132 @@
     function deckTotalsText(){
       const t = deckTotals();
       return countOf(t.cards, 'card', 'cards') + ' · ' + countOf(t.pages, 'page', 'pages');
+    }
+
+    // Width the open panel takes from the page area (panel plus the gap before it).
+    function deckPanelSpace(){
+      const el = document.getElementById('deckPanel');
+      if (!el || el.hidden || getComputedStyle(el).display === 'none') return 0;
+      const gap = parseFloat(getComputedStyle(el.parentElement).columnGap) || 0;
+      return el.getBoundingClientRect().width + gap;
+    }
+
+    var deckPanelOpen = false;
+    var deckPanelTimer = null;
+
+    function setDeckPanelOpen(open){
+      deckPanelOpen = !!open;
+      const el = document.getElementById('deckPanel');
+      if (el) el.hidden = !deckPanelOpen;
+      if (deckBtn) deckBtn.setAttribute('aria-expanded', deckPanelOpen ? 'true' : 'false');
+      try { localStorage.setItem('mtgDeckPanelOpen', deckPanelOpen ? '1' : '0'); } catch(_){}
+      if (deckPanelOpen) renderDeckPanel(); else clearDeckHighlight();
+      updatePreviewScale();
+    }
+
+    // Called by saveState() after every layout change; a function declaration (and `var` timer)
+    // because saveState can run before this part of the script has executed.
+    function scheduleDeckPanel(){
+      if (!deckPanelOpen) return;
+      clearTimeout(deckPanelTimer);
+      deckPanelTimer = setTimeout(renderDeckPanel, 100);
+    }
+
+    function clearDeckHighlight(){
+      document.querySelectorAll('.cell.deck-highlight').forEach(function(c){ c.classList.remove('deck-highlight'); });
+    }
+
+    function highlightDeckRow(row){
+      clearDeckHighlight();
+      if (!row) return;
+      row.positions.forEach(function(p){
+        const s = posToSlot(p);
+        if (s.page === currentPage && pages[s.page]) pages[s.page].cells[s.index].classList.add('deck-highlight');
+      });
+    }
+
+    function showDeckRowFirstCopy(row){
+      if (!row || !row.positions.length) return;
+      const s = posToSlot(row.positions[0]);
+      showPage(s.page);
+      const cell = pages[s.page] && pages[s.page].cells[s.index];
+      if (cell && typeof cell.focus === 'function') cell.focus();
+    }
+
+    var deckRowsShown = [];
+
+    function renderDeckPanel(){
+      clearTimeout(deckPanelTimer);
+      if (!deckPanelOpen) return;
+      const list = document.getElementById('deckList');
+      if (!list) return;
+      // Keep keyboard focus on the same control of the same row across re-renders.
+      const active = document.activeElement;
+      const activeRow = active && active.closest ? active.closest('.deck-row') : null;
+      const focusKey = activeRow ? activeRow.dataset.key : null;
+      const focusClass = activeRow ? ['deck-name', 'deck-minus', 'deck-plus', 'deck-art'].find(function(c){ return active.classList.contains(c); }) : null;
+
+      const rows = deckRows();
+      deckRowsShown = rows;
+      document.getElementById('deckTotals').textContent = deckTotalsText();
+      document.getElementById('deckEmpty').hidden = rows.length > 0;
+      list.innerHTML = '';
+      rows.forEach(function(row){
+        const li = document.createElement('li');
+        li.className = 'deck-row';
+        li.dataset.key = row.key;
+        const name = document.createElement('button');
+        name.type = 'button'; name.className = 'deck-name';
+        name.textContent = (row.dfc ? '◐ ' : '') + row.label;
+        name.title = row.dfc ? row.label + ' (double-faced) — show its first copy' : row.label + ' — show its first copy';
+        const arts = document.createElement('span');
+        arts.className = 'deck-arts';
+        arts.textContent = row.kind === 'card' && row.arts > 1 ? row.arts + ' arts' : '';
+        const count = document.createElement('span');
+        count.className = 'deck-count';
+        count.textContent = String(row.count);
+        count.setAttribute('aria-label', countOf(row.count, 'copy', 'copies'));
+        li.append(name, arts, count);
+        name.addEventListener('click', function(){ showDeckRowFirstCopy(row); });
+        li.addEventListener('mouseenter', function(){ highlightDeckRow(row); });
+        li.addEventListener('mouseleave', clearDeckHighlight);
+        li.addEventListener('focusin', function(){ highlightDeckRow(row); });
+        li.addEventListener('focusout', function(e){ if (!li.contains(e.relatedTarget)) clearDeckHighlight(); });
+        decorateDeckRow(li, row);
+        list.appendChild(li);
+      });
+      if (focusKey){
+        const li = Array.from(list.children).find(function(el){ return el.dataset.key === focusKey; });
+        const target = li && (li.querySelector('.' + focusClass) || li.querySelector('.deck-name'));
+        if (target) target.focus();
+      }
+      // Cards saved before names were recorded are looked up by Scryfall card id, each once a session
+      // (lookUpCardFaces marks them tried), so a failure (offline) isn't retried on every render.
+      // What's found is saved, which renders the rows again with their names.
+      const nameless = [];
+      rows.forEach(function(r){
+        if (r.needsName) r.items.forEach(function(it){ if (it.back === undefined && !cardFaceLookupTried.has(it)) nameless.push(it); });
+      });
+      if (nameless.length){
+        lookUpCardFaces(nameless).then(function(){
+          if (nameless.some(function(it){ return it.back !== undefined; })) saveState();
+        }).catch(function(err){ console.warn('Card name lookup failed', err); });
+      }
+    }
+
+    // Row controls added by later features (+ / −, art picker). Without them a row is name + count.
+    function decorateDeckRow(li, row){}
+
+    if (deckBtn){
+      deckBtn.addEventListener('click', function(){ setDeckPanelOpen(!deckPanelOpen); });
+    }
+    const deckPasteBtn = document.getElementById('deckPasteBtn');
+    if (deckPasteBtn){
+      deckPasteBtn.addEventListener('click', function(){
+        const modal = ensureDeckModal();
+        openModal(modal);
+        if (deckText){ deckText.focus(); }
+      });
     }
 
     /* ===== Export / Import ===== */
@@ -5675,6 +5828,7 @@
         console.error('Failed to save state', err);
       }
       scheduleBackPages();
+      scheduleDeckPanel();
     }
 
     async function loadState(){
@@ -6541,6 +6695,8 @@
       pages.push(firstPage);
       syncCutMarksState();
       renderGrid(firstPage);
+      // Before the first await, so the first paint already sizes the page beside an open panel.
+      try { setDeckPanelOpen(localStorage.getItem('mtgDeckPanelOpen') === '1'); } catch(_){ setDeckPanelOpen(false); }
       let loaded = false;
       try{
         loaded = await loadState();
@@ -6553,6 +6709,7 @@
       doUpdate();
       loadTheme();
       loadTuning();
+      renderDeckPanel();   // the loaded layout's rows now, not after saveState's delayed refresh
       syncBackPages();
     })();
 
