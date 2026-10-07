@@ -412,6 +412,8 @@
 
     .modal .sheet textarea { width: 100%; min-height: 240px; resize: vertical; box-sizing: border-box; display: block; margin: 0; }
     .right { margin-left: auto; }
+    .pdf-options { display: flex; flex-direction: column; gap: 6px; margin-left: 28px; font-size: 13px; }
+    .pdf-options[hidden] { display: none; }
 
     .warning { background:#fff7ed; color:#7c2d12; border:1px solid #fdba74; padding:8px 10px; border-radius:8px; font-size:13px; }
 
@@ -4441,9 +4443,21 @@
                 <input type="radio" name="exportMode" value="light" />
                 <strong>Lightweight</strong> — card positions and Scryfall links only (small file; cards reload from Scryfall, and your own uploaded images are not included)
               </label>
+              <label class="field">
+                <input type="radio" name="exportMode" value="pdf" />
+                <strong>PDF (ready to print)</strong> — exact page size; print it at "Actual size / 100%"
+              </label>
+              <div id="pdfOptions" class="pdf-options" role="group" aria-label="PDF image quality" hidden>
+                <label class="field"><input type="radio" name="pdfQuality" value="jpeg" checked /> High-quality JPEG (smaller file)</label>
+                <label class="field"><input type="radio" name="pdfQuality" value="png" /> Original PNG (exact pixels, large file)</label>
+                <span id="pdfEstimate" class="footnote" role="status" aria-live="polite">Estimating size…</span>
+                <span class="footnote">In the print dialog choose <b>Actual size</b> (100%), not "Fit to page".</span>
+              </div>
             </div>
+            <div id="exportError" class="warning" role="alert" hidden></div>
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="doExportBtn">Export</button>
+              <span id="exportProgress" class="footnote" role="status" aria-live="polite" hidden></span>
               <div class="right"></div>
               <button id="closeExportBtn" class="secondary">Close</button>
             </div>
@@ -4453,6 +4467,13 @@
       (exportModalRoot || document.body).appendChild(modal);
       exportModal = modal;
       setupModalBackdrop(exportModal);
+
+      // PDF shows its options (and their size estimate) only while it's the chosen export.
+      exportModal.addEventListener('change', function(e){
+        if (e.target.name !== 'exportMode' && e.target.name !== 'pdfQuality') return;
+        showExportError('');
+        syncPdfOptions();
+      });
 
       const closeBtn = exportModal.querySelector('#closeExportBtn');
       if (closeBtn){
@@ -4466,12 +4487,14 @@
           const mode = modeEl ? modeEl.value : 'full';
           doBtn.disabled = true;
           doBtn.textContent = 'Exporting…';
+          showExportError('');
           try {
             await performExport(mode);
             closeModal(exportModal);
           } catch(err){
             console.error('Export failed', err);
             setStatus('Export failed: ' + (err.message || err));
+            showExportError('Export failed: ' + (err.message || err));
           } finally {
             doBtn.disabled = false;
             doBtn.textContent = 'Export';
@@ -4480,6 +4503,23 @@
       }
 
       return exportModal;
+    }
+
+    // An export problem shown in the dialog itself (empty text hides it).
+    function showExportError(text){
+      const el = exportModal && exportModal.querySelector('#exportError');
+      if (!el) return;
+      el.textContent = text || '';
+      el.hidden = !text;
+    }
+
+    // The PDF options follow the chosen export; their size estimate is refreshed while PDF is chosen.
+    function syncPdfOptions(){
+      if (!exportModal) return;
+      const isPdf = (exportModal.querySelector('input[name="exportMode"]:checked') || {}).value === 'pdf';
+      exportModal.querySelector('#pdfOptions').hidden = !isPdf;
+      if (isPdf) updatePdfEstimate();
+      else pdfEstimateToken++;   // an estimate still running is no longer wanted
     }
 
     // Must match IMAGE_CACHE in service-worker.js, which serves Scryfall card images from it.
@@ -4592,6 +4632,7 @@
     }
 
     async function performExport(mode){
+      if (mode === 'pdf') return exportPdf();
       const exportData = await buildExportData(mode);
       const json = JSON.stringify(exportData);
       const blob = new Blob([json], { type: 'application/json' });
@@ -4614,6 +4655,348 @@
         reader.onerror = function(){ reject(reader.error || new Error('Failed to read blob')); };
         reader.readAsDataURL(blob);
       });
+    }
+
+    /* ===== PDF export ===== */
+    // jsPDF (vendor/, see vendor/README.md), loaded on first use and precached by the service worker,
+    // so it works offline. A failed load can be retried.
+    var JSPDF_SRC = 'vendor/jspdf.umd.min.js';
+    var jsPdfPromise = null;
+    function loadJsPdf(){
+      if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf);
+      if (!jsPdfPromise){
+        jsPdfPromise = new Promise(function(resolve, reject){
+          const s = document.createElement('script');
+          s.src = JSPDF_SRC;
+          s.onload = function(){
+            if (window.jspdf && window.jspdf.jsPDF){ resolve(window.jspdf); return; }
+            jsPdfPromise = null;
+            reject(new Error('The PDF library didn\'t start. Reload the page and try again.'));
+          };
+          s.onerror = function(){
+            s.remove();
+            jsPdfPromise = null;
+            reject(new Error('Couldn\'t load the PDF library. Check your connection, then try again.'));
+          };
+          document.head.appendChild(s);
+        });
+      }
+      return jsPdfPromise;
+    }
+
+    // Where a card's image comes from: `id` names the image (its storage key or URL; each image is
+    // embedded once) and `color` is the bleed colour the page shows for it, when known.
+    function pdfFrontSource(item){
+      const color = item.__bleedColor || null;
+      if (item.type === 'stored' && item.key) return { id: 'stored:' + item.key, key: item.key, mime: item.mime || null, color: color };
+      return { id: 'url:' + (item.url || ''), url: item.url || null, color: color };
+    }
+
+    // What prints behind a card (backSrcFor): its back face, the default card back or an uploaded one.
+    function pdfBackSource(item){
+      const src = backSrcFor(item);
+      if (!src) return null;
+      let color = null;
+      try{ color = borderColorCache.get(new URL(src, document.baseURI).href) || null; }catch(_){}
+      if (src === backImageUrl && src !== DEFAULT_BACK_URL && printSettings.backImageKey){
+        return { id: 'stored:' + printSettings.backImageKey, key: printSettings.backImageKey, mime: null, color: color };
+      }
+      return { id: 'url:' + src, url: src, color: color };
+    }
+
+    // The sheets a print or PDF contains, in order: each front page, then its back when double-sided,
+    // with each cell's image source (null when empty). Like printing, waits (at most 10 s) for back-face
+    // lookups and the card back.
+    async function pdfSheets(){
+      await imageStoreReady;
+      if (printSettings.duplex){
+        await Promise.race([backPagesReady(), new Promise(function(r){ setTimeout(r, 10000); })]).catch(function(err){
+          console.warn('Back pages may be incomplete', err);
+        });
+      }
+      const sheets = [];
+      pages.forEach(function(model){
+        const front = [], back = [];
+        for (let i = 0; i < CELLS_PER_PAGE; i++){
+          const item = model.items[i];
+          front.push(item ? pdfFrontSource(item) : null);
+          back.push(item ? pdfBackSource(item) : null);
+        }
+        sheets.push({ back: false, cells: front });
+        if (printSettings.duplex) sheets.push({ back: true, cells: back });
+      });
+      return sheets;
+    }
+
+    async function readPdfSource(c){
+      if (c.key) return imageStore.getBlob(c.key, c.mime || null);
+      if (!c.url) throw new Error('No image');
+      const r = await fetch(c.url);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    }
+
+    // What an image file is, from its first bytes: 'jpeg', 'png' or 'other'.
+    function imageKind(b){
+      if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return 'jpeg';
+      if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return 'png';
+      return 'other';
+    }
+
+    // The EXIF orientation in a JPEG's APP1 segment (TIFF data from `start` to `end`): 1 is upright,
+    // 0 means it couldn't be read.
+    function exifOrientation(b, start, end){
+      if (start + 8 > end) return 0;
+      const le = b[start] === 0x49;
+      const u16 = function(p){ return le ? b[p] + b[p + 1] * 256 : b[p] * 256 + b[p + 1]; };
+      const u32 = function(p){ return le ? u16(p) + u16(p + 2) * 65536 : u16(p) * 65536 + u16(p + 2); };
+      const ifd = start + u32(start + 4);
+      if (ifd + 2 > end) return 0;
+      for (let k = 0, n = u16(ifd); k < n; k++){
+        const e = ifd + 2 + k * 12;
+        if (e + 12 > end) return 0;
+        if (u16(e) === 0x0112) return u16(e + 8);
+      }
+      return 1;
+    }
+
+    // A JPEG a PDF shows exactly as the browser does, so it can go in as it is: baseline or progressive,
+    // 8-bit greyscale or colour, upright (PDF viewers ignore EXIF rotation) and the size the browser
+    // decoded. Others (CMYK, rotated, ...) are redrawn.
+    function jpegEmbeddable(b, w, h){
+      let i = 2, sof = null, orientation = 1;
+      while (i + 4 <= b.length && b[i] === 0xFF){
+        const marker = b[i + 1];
+        if (marker === 0xFF){ i++; continue; }
+        if (marker === 0xDA || marker === 0xD9) break;   // image data starts / ends
+        const len = b[i + 2] * 256 + b[i + 3], seg = i + 4;
+        if (marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC){
+          sof = { type: marker, bits: b[seg], h: b[seg + 1] * 256 + b[seg + 2], w: b[seg + 3] * 256 + b[seg + 4], comps: b[seg + 5] };
+        }else if (marker === 0xE1 && b[seg] === 0x45 && b[seg + 1] === 0x78 && b[seg + 2] === 0x69 && b[seg + 3] === 0x66){   // "Exif"
+          orientation = exifOrientation(b, seg + 6, i + 2 + len);
+        }
+        i += 2 + len;
+      }
+      return !!sof && sof.type <= 0xC2 && sof.bits === 8 && (sof.comps === 1 || sof.comps === 3) &&
+        orientation === 1 && sof.w === w && sof.h === h;
+    }
+
+    // A PNG jsPDF embeds pixel for pixel: 8-bit RGB or RGBA, not interlaced, and nothing the browser
+    // would apply that the PDF wouldn't (colour profile, gamma, a transparent colour). Others are redrawn.
+    function pngEmbeddable(b){
+      if (b.length < 33 || String.fromCharCode(b[12], b[13], b[14], b[15]) !== 'IHDR') return false;
+      if (b[24] !== 8 || (b[25] !== 2 && b[25] !== 6) || b[28] !== 0) return false;
+      for (let p = 8; p + 8 <= b.length; ){
+        const type = String.fromCharCode(b[p + 4], b[p + 5], b[p + 6], b[p + 7]);
+        if (type === 'IDAT' || type === 'IEND') return true;
+        if (type === 'tRNS' || type === 'iCCP' || type === 'gAMA' || type === 'cHRM') return false;
+        p += 12 + b[p] * 16777216 + b[p + 1] * 65536 + b[p + 2] * 256 + b[p + 3];
+      }
+      return false;
+    }
+
+    // Decoded as the page shows it (EXIF rotation applied). Formats createImageBitmap can't read from a
+    // file directly (SVG) go through an <img>.
+    async function decodePdfImage(blob){
+      try{ return await createImageBitmap(blob); }
+      catch(err){
+        const url = URL.createObjectURL(blob);
+        try{ const img = new Image(); img.src = url; await img.decode(); return await createImageBitmap(img); }
+        finally{ URL.revokeObjectURL(url); }
+      }
+    }
+
+    // Reads one image and readies it for the PDF: its size as the page draws it, its border colour (with
+    // bleed) and the bytes to embed. JPEGs go in as they are in either quality: no re-encoding, no loss.
+    // In JPEG quality other images are drawn over what shows through their transparent corners on the
+    // printed page (the bleed colour, or white paper without bleed) and encoded at 0.92; in PNG quality
+    // PNGs go in as they are and other images are redrawn as PNG. `redraw` forces redrawing. One image
+    // is decoded at a time and released straight after.
+    async function preparePdfImage(c, quality, bleed, redraw){
+      const blob = await readPdfSource(c);
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const bmp = await decodePdfImage(blob);
+      try{
+        const w = bmp.width, h = bmp.height;
+        const color = bleed ? (c.color || borderColorFromSource(bmp, w, h) || 'rgb(0,0,0)') : null;
+        const kind = imageKind(bytes);
+        if (!redraw && kind === 'jpeg' && jpegEmbeddable(bytes, w, h)) return { data: bytes, format: 'JPEG', w: w, h: h, color: color };
+        if (!redraw && quality === 'png' && kind === 'png' && pngEmbeddable(bytes)) return { data: bytes, format: 'PNG', w: w, h: h, color: color };
+        const asJpeg = quality !== 'png';
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        try{
+          const g = cv.getContext('2d');
+          if (asJpeg){ g.fillStyle = color || '#fff'; g.fillRect(0, 0, w, h); }
+          g.drawImage(bmp, 0, 0);
+          // toDataURL, not toBlob: Chrome holds toBlob back about a second per call while the tab is in
+          // the background, which would stall a big deck's export.
+          const url = cv.toDataURL(asJpeg ? 'image/jpeg' : 'image/png', 0.92);
+          const out = url.startsWith(asJpeg ? 'data:image/jpeg' : 'data:image/png') ? dataUrlToBlob(url) : null;
+          if (!out) throw new Error('Couldn\'t encode the image');
+          return { data: new Uint8Array(await out.arrayBuffer()), format: asJpeg ? 'JPEG' : 'PNG', w: w, h: h, color: color };
+        }finally{ cv.width = 0; cv.height = 0; }
+      }finally{ bmp.close(); }
+    }
+
+    // Sets the fill colour to a CSS rgb() colour exactly (jsPDF's setFillColor rounds each channel to
+    // 0.01, up to 1.3 levels off).
+    function pdfFill(doc, css){
+      const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(css || '') || [0, 0, 0, 0];
+      doc.internal.write([m[1], m[2], m[3]].map(function(v){ return +(v / 255).toFixed(5); }).join(' ') + ' rg');
+    }
+
+    // Draws every sheet from computeLayout(), as printing does: bleed boxes filled with the card's border
+    // colour; each image fitted (savedFitMode), centred in its trim box and clipped to it, rounded like
+    // the printed card when there's no bleed; cut marks on fronts as printed. Positions are exactly the
+    // calculator's inches × 72 (the browser print snaps fronts to whole CSS pixels, up to ~0.006″ off).
+    // Each distinct image is embedded once; one that can't be read leaves its cells empty.
+    // Resolves with { blob, sheets, missing } (missing: how many cells were left empty).
+    async function buildPdf(quality, onProgress){
+      const lib = await loadJsPdf();
+      const sheets = await pdfSheets();
+      const layout = computeLayout();
+      if (layout.problem) throw new Error(layout.problem);
+      const PT = 72, R = CARD_CORNER_PX / 96 * PT, fit = savedFitMode, bleed = layout.bleedIn > 0;
+      const size = [layout.page.w * PT, layout.page.h * PT];
+      const doc = new lib.jsPDF({ unit: 'pt', format: size, orientation: 'portrait', compress: true, putOnlyUsedFonts: true });
+      const total = new Set(sheets.flatMap(function(s){ return s.cells.filter(Boolean).map(function(c){ return c.id; }); })).size;
+      const images = new Map();   // id -> prepared image, or null when it couldn't be read
+      const prepare = function(c, redraw){
+        return preparePdfImage(c, quality, bleed, redraw).then(function(im){ im.alias = 'img' + images.size + (redraw ? 'r' : ''); return im; }, function(err){
+          console.warn('PDF: couldn\'t read an image', c.id, err);
+          return null;
+        });
+      };
+      let done = 0, missing = 0;
+      for (let si = 0; si < sheets.length; si++){
+        const sheet = sheets[si];
+        if (si > 0) doc.addPage(size, 'portrait');
+        const boxes = sheet.back ? layout.backCards : layout.cards;
+        for (let i = 0; i < CELLS_PER_PAGE; i++){
+          const c = sheet.cells[i];
+          if (!c) continue;
+          if (!images.has(c.id)){
+            if (onProgress) onProgress(++done, total);
+            images.set(c.id, await prepare(c, false));
+          }
+          let im = images.get(c.id);
+          if (!im){ missing++; continue; }
+          const t = boxes[i].trim, b = boxes[i].bleed, d = computeFitDims(im.w, im.h, t.w, t.h, fit);
+          const place = [(t.x + (t.w - d.w) / 2) * PT, (t.y + (t.h - d.h) / 2) * PT, d.w * PT, d.h * PT];
+          if (bleed){ pdfFill(doc, c.color || im.color); doc.rect(b.x * PT, b.y * PT, b.w * PT, b.h * PT, 'F'); }
+          doc.saveGraphicsState();
+          if (bleed) doc.rect(t.x * PT, t.y * PT, t.w * PT, t.h * PT, null);
+          else doc.roundedRect(t.x * PT, t.y * PT, t.w * PT, t.h * PT, R, R, null);
+          doc.clip(); doc.discardPath();
+          // The first use embeds the image; later ones reuse it by alias, so our copy of the bytes goes.
+          // An image jsPDF can't take as it is gets one more try, redrawn.
+          for (let attempt = 0; im; attempt++){
+            try{
+              doc.addImage(im.data || NO_PDF_IMAGE_DATA, im.format, place[0], place[1], place[2], place[3], im.alias, im.format === 'PNG' ? 'FAST' : 'NONE');
+              im.data = null;
+              break;
+            }catch(err){
+              if (!im.data || attempt > 0){ console.warn('PDF: couldn\'t embed an image', c.id, err); images.set(c.id, null); im = null; missing++; break; }
+              im = await prepare(c, true);
+              images.set(c.id, im);
+              if (!im) missing++;
+            }
+          }
+          doc.restoreGraphicsState();
+        }
+        if (!sheet.back && toggleCutMarks && toggleCutMarks.checked){
+          pdfFill(doc, 'rgb(53,59,71)');   // the printed --cut-mark-color, rgba(17, 24, 39, 0.85), over white paper
+          layout.cutMarks.forEach(function(m){
+            const r = Math.min(m.w, m.h) / 2 * PT;   // round ends, like the printed marks' border-radius
+            doc.roundedRect(m.x * PT, m.y * PT, m.w * PT, m.h * PT, r, r, 'F');
+          });
+        }
+      }
+      return { blob: doc.output('blob'), sheets: sheets.length, missing: missing };
+    }
+    var NO_PDF_IMAGE_DATA = new Uint8Array(0);
+
+    // Builds the PDF in the chosen quality and downloads it, showing progress in the dialog and the
+    // status bar, and afterwards how many images (if any) couldn't be included.
+    async function exportPdf(){
+      const checked = exportModal && exportModal.querySelector('input[name="pdfQuality"]:checked');
+      const quality = checked && checked.value === 'png' ? 'png' : 'jpeg';
+      const progress = exportModal && exportModal.querySelector('#exportProgress');
+      const show = function(text){
+        if (progress){ progress.textContent = text; progress.hidden = !text; }
+        if (text) setStatus(text);
+      };
+      show('Preparing the PDF…');
+      try{
+        const result = await buildPdf(quality, function(n, total){ show('Building PDF: ' + n + '/' + total + ' images…'); });
+        const url = URL.createObjectURL(result.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'deck-layout-' + new Date().toISOString().slice(0,10) + '.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+        setStatus('Saved the PDF (' + result.sheets + ' page' + (result.sheets === 1 ? '' : 's') + ')' +
+          (result.missing ? ' — ' + result.missing + ' image(s) couldn\'t be included' : '') + '. Print it at Actual size (100%).');
+        return result;
+      }finally{
+        show('');
+      }
+    }
+
+    // The size estimate in the dialog. Each run has a token; only the latest run may show its result,
+    // so changing the choice while one is running can't leave an older estimate on screen.
+    var pdfEstimateToken = 0;
+    var pdfSourceInfoCache = new Map();   // image id -> { bytes, kind }; what an id names doesn't change
+
+    async function pdfSourceInfo(c){
+      if (pdfSourceInfoCache.has(c.id)) return pdfSourceInfoCache.get(c.id);
+      const blob = await readPdfSource(c);
+      const info = { bytes: blob.size, kind: imageKind(new Uint8Array(await blob.slice(0, 4).arrayBuffer())) };
+      pdfSourceInfoCache.set(c.id, info);
+      return info;
+    }
+
+    // Rough PDF size, following buildPdf: JPEGs go in as they are. In JPEG quality other images come
+    // out at about a quarter of their size (card PNGs); in PNG quality PNGs go in about as they are and
+    // other formats (lossy WebP and the like) grow, roughly fourfold, redrawn as PNG.
+    function estimatePdfBytes(infos, quality){
+      return infos.reduce(function(sum, f){
+        if (f.kind === 'jpeg') return sum + f.bytes;
+        if (quality === 'png') return sum + (f.kind === 'png' ? f.bytes : f.bytes * 4);
+        return sum + (f.kind === 'png' ? f.bytes / 4 : f.bytes);
+      }, 0);
+    }
+
+    async function updatePdfEstimate(){
+      const el = exportModal && exportModal.querySelector('#pdfEstimate');
+      if (!el) return;
+      const token = ++pdfEstimateToken;
+      const quality = (exportModal.querySelector('input[name="pdfQuality"]:checked') || {}).value === 'png' ? 'png' : 'jpeg';
+      el.textContent = 'Estimating size…';
+      delete el.dataset.bytes;
+      let text, bytes = null;
+      try{
+        const sources = new Map();
+        (await pdfSheets()).forEach(function(s){ s.cells.forEach(function(c){ if (c && !sources.has(c.id)) sources.set(c.id, c); }); });
+        const infos = [];
+        let unreadable = 0;
+        for (const c of sources.values()){
+          if (token !== pdfEstimateToken) return;
+          try{ infos.push(await pdfSourceInfo(c)); }catch(_){ unreadable++; }
+        }
+        bytes = estimatePdfBytes(infos, quality);
+        text = (bytes < 1024 * 1024 ? 'Estimated size: under 1 MB' : 'Estimated size: about ' + Math.round(bytes / (1024 * 1024)) + ' MB') +
+          (unreadable ? ' (' + unreadable + ' image(s) can\'t be read and would be left out)' : '');
+      }catch(err){
+        console.warn('PDF size estimate failed', err);
+        text = 'Couldn\'t estimate the size.';
+      }
+      if (token !== pdfEstimateToken) return;
+      el.textContent = text;
+      if (bytes !== null) el.dataset.bytes = String(Math.round(bytes));
     }
 
     async function performImport(file){
@@ -4804,6 +5187,8 @@
     if (exportBtn){
       exportBtn.addEventListener('click', function(){
         openModal(ensureExportModal());
+        showExportError('');
+        syncPdfOptions();   // the layout may have changed since the dialog was last open
       });
     }
 
