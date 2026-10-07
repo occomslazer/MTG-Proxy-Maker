@@ -463,6 +463,14 @@
     :root[data-theme="dark"] .help-list { color:#cbd5e1; }
     :root[data-theme="dark"] .footnote { color:#9ca3af; }
     :root[data-theme="dark"] .warning { background:#292524; color:#fed7aa; border-color:#a16207; }
+    /* Printed pages are the same in either theme: the dark theme's screen colours stay off paper (cut
+       marks in the print colour; behind the pages and in empty cells, as when "Background graphics"
+       is on). After the dark rules, so these win. */
+    @media print{
+      :root, :root[data-theme="dark"] { --cut-mark-color: rgba(17, 24, 39, 0.85) !important; }
+      :root[data-theme="dark"] body { background: white; }
+      :root[data-theme="dark"] .cell { background: #f9fafb; }
+    }
   </style>
   <!-- Paper size for the print dialog; updated by applyLayout() when the paper setting changes. -->
   <style id="pageSizeRule">@page { size: 8.5in 11in; margin: 0; }</style>
