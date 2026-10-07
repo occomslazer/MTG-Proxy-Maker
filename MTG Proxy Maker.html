@@ -86,9 +86,7 @@
       background: var(--page-bg);
       box-shadow: 0 10px 30px rgba(0,0,0,.12);
       position: relative;
-      display: grid;
-      place-items: start center;
-      padding-top: var(--grid-top);
+      display: block;
       transform-origin: top left;
       transform: scale(var(--preview-scale));
       margin: 0;
@@ -100,8 +98,9 @@
     .pages-controls { display:flex; align-items:center; gap:8px; }
     .pages-controls .pill { font-variant-numeric: tabular-nums; padding: 4px 8px; border:1px solid #e5e7eb; border-radius: 999px; background:#f9fafb; }
 
-    .grid { width: var(--grid-w); height: var(--grid-h); display: grid; grid-template-columns: repeat(var(--cols), var(--cell-w)); grid-template-rows: repeat(var(--rows), var(--cell-h)); gap: var(--grid-gap); position: relative; z-index: 1; transform: translateX(var(--grid-left)); }
-    .grid .cut-marks-layer {
+    /* Positions come from computeLayout() via inline styles (inches). */
+    .grid { position: absolute; z-index: 1; }
+    .page > .cut-marks-layer {
       position: absolute;
       inset: 0;
       pointer-events: none;
@@ -109,8 +108,7 @@
       opacity: 0;
       transition: opacity .15s ease-in-out;
     }
-    .grid.cut-marks .cut-marks-layer,
-    body.show-cuts .grid.cut-marks .cut-marks-layer { opacity: 1; }
+    .page.cut-marks > .cut-marks-layer { opacity: 1; }
     .cut-marks-layer .cut-mark {
       position: absolute;
       background: var(--cut-mark-color);
@@ -118,17 +116,9 @@
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
-    .cut-marks-layer .cut-mark.vertical {
-      width: var(--cut-mark-thickness);
-      height: var(--cut-mark-length);
-    }
-    .cut-marks-layer .cut-mark.horizontal {
-      height: var(--cut-mark-thickness);
-      width: var(--cut-mark-length);
-    }
     body.hide-guides .cell { border-color: transparent !important; }
 
-    .cell { width: var(--cell-w); height: var(--cell-h); border: 0.5pt dashed var(--guide-color); background: #f9fafb; position: relative; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; contain: layout paint size; }
+    .cell { width: var(--cell-w); height: var(--cell-h); border: 0.5pt dashed var(--guide-color); background: #f9fafb; position: absolute; box-sizing: border-box; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; contain: layout paint size; }
     .cell img { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: none; image-rendering: auto; -webkit-user-drag: none; user-select: none; }
     .cell .placeholder{ color: #9ca3af; font-size: 12px; text-align: center; padding: 8px; user-select: none; }
 
@@ -205,7 +195,7 @@
     }
     .preview-mode .page {
       display: block !important;
-      position: static !important;
+      position: relative !important;
       box-shadow: 0 4px 24px rgba(0,0,0,.18), 0 0 0 1px rgba(0,0,0,.06);
       transform: none !important;
       flex-shrink: 0;
@@ -251,9 +241,6 @@
 
     .cell.dragging { opacity: .6; }
 
-    /* Instruct printers on paper size */
-    @page { size: 8.5in 11in; margin: 0; }
-
     /* ====== PRINT ====== */
     @media print{
       header, .controls, .screen-only { display: none !important; }
@@ -277,9 +264,9 @@
         height: var(--page-h);
         transform: none !important;
         box-shadow: none !important;
-        position: static !important;
+        position: relative !important;
         display: block !important;
-        padding-top: var(--grid-top);
+        padding-top: 0;
         margin: 0 !important;
         box-sizing: border-box;
         break-inside: avoid;
@@ -287,8 +274,6 @@
         break-after: auto !important;
         page-break-after: auto !important;
       }
-
-      .page .grid { margin-left: auto !important; margin-right: auto !important; }
 
       .page + .page{
         break-before: page;
@@ -438,6 +423,8 @@
     :root[data-theme="dark"] .footnote { color:#9ca3af; }
     :root[data-theme="dark"] .warning { background:#292524; color:#fed7aa; border-color:#a16207; }
   </style>
+  <!-- Paper size for the print dialog; updated by applyLayout() when the paper setting changes. -->
+  <style id="pageSizeRule">@page { size: 8.5in 11in; margin: 0; }</style>
 </head>
 <body>
   <a href="#pageWrap" class="skip-link">Skip to content</a>
@@ -1635,139 +1622,60 @@
     var currentPage = 0;
     let ctxTarget = null;
 
-    function buildCutMarksLayer(layer){
-      if (!layer) return;
+    /* ===== Drawing pages from the layout ===== */
+    function inch(v){ return (Math.round(v * 1e6) / 1e6) + 'in'; }
 
-      const grid = layer.parentElement || layer.closest('.grid');
-      if (!grid) return;
+    // Positions an element at a box (inches), optionally relative to another box's origin.
+    function placeBox(el, box, origin){
+      el.style.left = inch(box.x - (origin ? origin.x : 0));
+      el.style.top = inch(box.y - (origin ? origin.y : 0));
+      el.style.width = inch(box.w);
+      el.style.height = inch(box.h);
+    }
 
+    let currentLayout = null;
+
+    // Applies the current layout everywhere: paper size (screen and print dialog), every page's grid,
+    // cells and cut marks.
+    function applyLayout(){
+      const layout = computeLayout();
+      currentLayout = layout;
+      const root = document.documentElement.style;
+      root.setProperty('--page-w', inch(layout.page.w));
+      root.setProperty('--page-h', inch(layout.page.h));
+      const rule = document.getElementById('pageSizeRule');
+      const sizeText = '@page { size: ' + inch(layout.page.w) + ' ' + inch(layout.page.h) + '; margin: 0; }';
+      if (rule && rule.textContent !== sizeText) rule.textContent = sizeText;
+      pages.forEach(function(model){ layoutPage(model, layout); });
+      return layout;
+    }
+
+    // When Chrome prints, it snaps untransformed boxes to whole CSS pixels (1/96"), but not distances
+    // moved by a transform. So the horizontal printer offset is applied as a transform (a 0.01" tweak
+    // isn't rounded away) and each cut mark is centred on its cut line by a transform across its
+    // thickness. That is also how pages printed before the calculator, so default prints are unchanged.
+    function layoutPage(model, layout){
+      layout = layout || currentLayout || computeLayout();
+      const shiftX = layout.grid.x - (layout.page.w - layout.grid.w) / 2;
+      const shift = 'translateX(' + inch(shiftX) + ')';
+      const origin = { x: shiftX, y: 0 };
+      placeBox(model.gridEl, layout.grid, origin);
+      model.gridEl.style.transform = shift;
+      model.cells.forEach(function(cell, i){ placeBox(cell, layout.cards[i].trim, layout.grid); });
+      model.cutMarksLayer.style.transform = shift;
+      drawCutMarks(model.cutMarksLayer, layout.cutMarks, origin);
+    }
+
+    function drawCutMarks(layer, rects, origin){
       layer.innerHTML = '';
-
-      function makeMark(className, styles){
-        var mark = document.createElement('div');
-        mark.className = 'cut-mark ' + className;
-        Object.keys(styles).forEach(function(key){
-          mark.style[key] = styles[key];
-        });
-        layer.appendChild(mark);
-      }
-
-      function buildFromCssFallback(){
-        for (var c = 0; c <= cols; c++){
-          var gapCount = (c === cols) ? Math.max(0, cols - 1) : c;
-          var leftPos = 'calc((var(--cell-w) * ' + c + ') + (var(--grid-gap) * ' + gapCount + '))';
-          makeMark('vertical cut-mark-top', {
-            left: leftPos,
-            top: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-            transform: 'translate(-50%, 0)'
-          });
-          makeMark('vertical cut-mark-bottom', {
-            left: leftPos,
-            bottom: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-            transform: 'translate(-50%, 0)'
-          });
-        }
-
-        for (var r = 0; r <= rows; r++){
-          var gapCountR = (r === rows) ? Math.max(0, rows - 1) : r;
-          var topPos = 'calc((var(--cell-h) * ' + r + ') + (var(--grid-gap) * ' + gapCountR + '))';
-          makeMark('horizontal cut-mark-left', {
-            top: topPos,
-            left: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-            transform: 'translate(0, -50%)'
-          });
-          makeMark('horizontal cut-mark-right', {
-            top: topPos,
-            right: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-            transform: 'translate(0, -50%)'
-          });
-        }
-      }
-
-      const gridRect = grid.getBoundingClientRect();
-      const hasLayout = (gridRect.width > 0 && gridRect.height > 0);
-      if (!hasLayout){
-        buildFromCssFallback();
-        return;
-      }
-
-      const layoutWidth = grid.offsetWidth || gridRect.width;
-      const layoutHeight = grid.offsetHeight || gridRect.height;
-      const scaleX = layoutWidth ? (gridRect.width / layoutWidth) : 1;
-      const scaleY = layoutHeight ? (gridRect.height / layoutHeight) : 1;
-      const safeScaleX = scaleX || 1;
-      const safeScaleY = scaleY || 1;
-
-      const cells = Array.from(grid.querySelectorAll('.cell'));
-      if (!cells.length) return;
-
-      const topRow = cells.slice(0, cols);
-      const firstCol = cells.filter(function(_, index){ return index % cols === 0; }).slice(0, rows);
-
-      function toSortedStops(set){
-        const sorted = Array.from(set).sort(function(a,b){ return a-b; });
-        const deduped = [];
-        const EPS = 1e-4;
-        sorted.forEach(function(value){
-          if (!deduped.length || Math.abs(value - deduped[deduped.length - 1]) > EPS){
-            deduped.push(value);
-          }
-        });
-        return deduped;
-      }
-
-      function formatPx(value){
-        var str = value.toFixed(4).replace(/\.?0+$/,'');
-        if (!str) str = '0';
-        return str + 'px';
-      }
-
-      const verticalStopSet = new Set();
-      topRow.forEach(function(cell){
-        const rect = cell.getBoundingClientRect();
-        verticalStopSet.add((rect.left - gridRect.left) / safeScaleX);
-      });
-      if (topRow.length){
-        const lastRect = topRow[topRow.length - 1].getBoundingClientRect();
-        verticalStopSet.add((lastRect.right - gridRect.left) / safeScaleX);
-      }
-      const verticalStops = toSortedStops(verticalStopSet);
-
-      const horizontalStopSet = new Set();
-      firstCol.forEach(function(cell){
-        const rect = cell.getBoundingClientRect();
-        horizontalStopSet.add((rect.top - gridRect.top) / safeScaleY);
-      });
-      if (firstCol.length){
-        const lastRect = firstCol[firstCol.length - 1].getBoundingClientRect();
-        horizontalStopSet.add((lastRect.bottom - gridRect.top) / safeScaleY);
-      }
-      const horizontalStops = toSortedStops(horizontalStopSet);
-
-      verticalStops.forEach(function(leftPos){
-        makeMark('vertical cut-mark-top', {
-          left: formatPx(leftPos),
-          top: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-          transform: 'translate(-50%, 0)'
-        });
-        makeMark('vertical cut-mark-bottom', {
-          left: formatPx(leftPos),
-          bottom: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-          transform: 'translate(-50%, 0)'
-        });
-      });
-
-      horizontalStops.forEach(function(topPos){
-        makeMark('horizontal cut-mark-left', {
-          top: formatPx(topPos),
-          left: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-          transform: 'translate(0, -50%)'
-        });
-        makeMark('horizontal cut-mark-right', {
-          top: formatPx(topPos),
-          right: 'calc(var(--cut-mark-inset) - var(--cut-mark-length))',
-          transform: 'translate(0, -50%)'
-        });
+      rects.forEach(function(r){
+        const m = document.createElement('div');
+        m.className = 'cut-mark';
+        placeBox(m, r, origin);
+        // Same box, anchored on the cut line and pulled back by half its thickness.
+        if (r.w <= r.h){ m.style.left = inch(r.x + r.w / 2 - origin.x); m.style.transform = 'translateX(-50%)'; }
+        else { m.style.top = inch(r.y + r.h / 2 - origin.y); m.style.transform = 'translateY(-50%)'; }
+        layer.appendChild(m);
       });
     }
 
@@ -1785,13 +1693,13 @@
       var cutLayer = document.createElement('div');
       cutLayer.className = 'cut-marks-layer';
       cutLayer.setAttribute('aria-hidden', 'true');
-      grid.appendChild(cutLayer);
       p.appendChild(grid);
+      p.appendChild(cutLayer);
       pageWrap.appendChild(p);
-      buildCutMarksLayer(cutLayer);
 
       var model = { items: new Array(CELLS_PER_PAGE).fill(null), pageEl: p, gridEl: grid, cells: cells, cutMarksLayer: cutLayer };
       wireGridEvents(model);
+      layoutPage(model);
       applyCutMarksToModel(model, !!(toggleCutMarks && toggleCutMarks.checked));
       return model;
     }
@@ -2261,11 +2169,8 @@
     });
 
     function applyCutMarksToModel(model, show){
-      if (!model || !model.gridEl) return;
-      if (model.cutMarksLayer){
-        buildCutMarksLayer(model.cutMarksLayer);
-      }
-      model.gridEl.classList.toggle('cut-marks', show);
+      if (!model || !model.pageEl) return;
+      model.pageEl.classList.toggle('cut-marks', show);
     }
 
     function syncCutMarksState(){
@@ -2280,6 +2185,7 @@
 
     // Refresh layout-dependent styling on changes
     function doUpdate(){
+      applyLayout();
       refreshPxPerIn();
       const cur = getCurrent();
       if (cur) cur.gridEl.querySelectorAll('img').forEach(img=>fitImage(img));
@@ -4279,7 +4185,8 @@
               } else {
                 console.warn('Ignoring saved printer tuning: ' + problem);
                 setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
-                top = 0.25; left = 0; w = 2.4750; h = 3.4650;              }
+                top = 0.25; left = 0; w = 2.4750; h = 3.4650;
+              }
             }
             applyTuning(top, left, w, h);
           }
@@ -4296,6 +4203,8 @@
           }
         }
       }catch(_){}
+      // Print settings can change above without a tuning change (which would redraw); redraw to match.
+      applyLayout();
     }
 
     function bindTuneButton(){
