@@ -1867,7 +1867,7 @@
 
         cell.addEventListener('dblclick', function(){
           if (previewActive) return;
-          targetIndexForFile = {page: pages.indexOf(model), index: idx};
+          targetIndexForFile = { model: model, index: idx };
           fileInput.click();
         });
       });
@@ -1888,7 +1888,7 @@
           if (!dataTransferHasImage(e.dataTransfer)) return;
           const p=model.pageEl;
           if(evt==='drop'){
-            await handleDropEvent(e, pageAnchor(pages.indexOf(model)));
+            await handleDropEvent(e, pageAnchor(model));
           } else {
             e.preventDefault();
             e.stopPropagation();
@@ -2044,7 +2044,7 @@
     }
 
     /* ===== Files & placement ===== */
-    var targetIndexForFile = null; // {page,index}
+    var targetIndexForFile = null; // {model,index}
     function placeImage(model, idx, item){
       if (!model || !model.items) return;
       const prev = model.items[idx];
@@ -2065,9 +2065,12 @@
         const target = targetIndexForFile;
         targetIndexForFile = null;
         if(selected.length){
-          assignFileToIndex(selected[0], target.page, target.index)
+          // If the page was removed while the file dialog was open, the image goes to the next free cell instead.
+          const anchor = cellAnchor(target.model, target.index);
+          const placement = createPlacement(anchor);
+          handleFiles([selected[0]], placement)
             .then(function(count){
-              setStatus(count ? 'Replaced image' : 'No image replaced');
+              setStatus(count ? (anchor ? 'Replaced image' : 'Added image') + describePlacedPages(placement.pagesUsed) : 'No image replaced');
             })
             .catch(function(err){
               console.error('Failed to replace image', err);
@@ -2120,9 +2123,8 @@
         if (!dataTransferHasImage(e.dataTransfer)) return;
         const current = getCurrent();
         if (!current || !current.pageEl) return;
-        const pageIdx = pages.indexOf(current);
         if(evt==='drop'){
-          await handleDropEvent(e, pageAnchor(pageIdx));
+          await handleDropEvent(e, pageAnchor(current));
         } else {
           e.preventDefault();
           e.stopPropagation();
@@ -2292,7 +2294,7 @@
       return results;
     }
 
-    async function pasteImageFromClipboard(target){
+    async function pasteImageFromClipboard(anchor){
       if(!clipboardCanReadImage()){
         setStatus(CLIPBOARD_UNAVAILABLE_MSG);
         return false;
@@ -2303,9 +2305,6 @@
           setStatus('Clipboard does not contain image data');
           return false;
         }
-        const anchor = (target && target.model && typeof target.index === 'number') ? cellAnchor(target.model, target.index)
-          : (target && typeof target.pageIndex === 'number') ? pageAnchor(target.pageIndex)
-          : null;
         const placement = createPlacement(anchor);
         const placed = await handleFiles(files, placement);
         if(placed > 0){
@@ -2372,7 +2371,7 @@
         if(clipboardCanReadImage()){
           e.preventDefault();
           e.stopImmediatePropagation();
-          await pasteImageFromClipboard(resolved && resolved.model ? { model: resolved.model, index: resolved.index } : null);
+          await pasteImageFromClipboard(anchor);
           return;
         }
 
@@ -2440,12 +2439,6 @@
         }
         await yieldToEventLoop(idleScheduler);
       }
-    }
-
-    async function assignFileToIndex(file, pageIdx, cellIdx){
-      if(!looksLikeImageFile(file)) return 0;
-      if(!pages[pageIdx]) return 0;
-      return handleFiles([file], createPlacement({ replaceAt: { page: pageIdx, index: cellIdx } }));
     }
 
     function nextEmptySlotFrom(start){
@@ -2523,8 +2516,9 @@
       return p === -1 ? null : { replaceAt: { page: p, index: index } };
     }
 
-    function pageAnchor(pageIdx){
-      return (typeof pageIdx === 'number' && pageIdx >= 0 && pageIdx < pages.length) ? { from: { page: pageIdx, index: 0 } } : null;
+    function pageAnchor(model){
+      const p = pages.indexOf(model);
+      return p === -1 ? null : { from: { page: p, index: 0 } };
     }
 
     // Adds image files through `placement` (default: next free cells from page 1). Returns how
@@ -3450,7 +3444,7 @@
           await yieldToEventLoop(pause);
         }
       }
-      const unplacedNote = placed < toAdd.length ? ' (' + (toAdd.length - placed) + ' couldn\'t be placed)' : '';
+      const unplacedNote = placed < toAdd.length ? '; ' + (toAdd.length - placed) + ' couldn\'t be placed' : '';
       setStatus('Added ' + placed + ' DFC back face(s)' + describePlacedPages(placement.pagesUsed) + unplacedNote + failureNote);
       showPage(currentPage);
     }
@@ -4251,7 +4245,7 @@
       const cellSection = ctxSection('Cell');
       cellSection.appendChild(ctxItem('Replace image…', function(){
         if (pageIdx === -1) return;
-        targetIndexForFile = { page: pageIdx, index: index };
+        targetIndexForFile = { model: model, index: index };
         fileInput.click();
       }));
       cellSection.appendChild(ctxItem('Duplicate to next empty cell', function(){
@@ -4276,8 +4270,7 @@
         clipboardSection.appendChild(ctxItem('Copy image', function(){ copyCellImage(model, index); }, { disabled: !canCopy, kbd: MOD_KEY_LABEL + '+C' }));
       }
       clipboardSection.appendChild(ctxItem('Paste image', function(){
-        const pageIdx = pages.indexOf(model);
-        pasteImageFromClipboard({ model: model, index: index, pageIndex: pageIdx >= 0 ? pageIdx : currentPage, allowOverwrite: true });
+        pasteImageFromClipboard(cellAnchor(model, index));
       }, { disabled: !canPaste, kbd: MOD_KEY_LABEL + '+V' }));
       if(!canCopy && !canPaste){
         clipboardSection.appendChild(ctxItem(CLIPBOARD_UNAVAILABLE_MSG, null, { disabled: true }));
@@ -4314,7 +4307,7 @@
       const canPaste = clipboardCanReadImage();
       clipboardSection.appendChild(ctxItem('Paste image(s) onto this page', function(){
         const targetPage = (ctxTarget && typeof ctxTarget.pageIndex === 'number') ? ctxTarget.pageIndex : pageIdx;
-        pasteImageFromClipboard({ pageIndex: targetPage });
+        pasteImageFromClipboard(pageAnchor(pages[targetPage]));
       }, { disabled: !canPaste, kbd: MOD_KEY_LABEL + '+V' }));
       if(!canPaste){
         clipboardSection.appendChild(ctxItem(CLIPBOARD_UNAVAILABLE_MSG, null, { disabled: true }));
