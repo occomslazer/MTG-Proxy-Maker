@@ -126,8 +126,8 @@ Geometry (w, h = card size; b = bleed; g = gap; all inches):
 - First bleed box: `x0 = (page.w − gridW) / 2 + offsetX`, `y0 = topMargin`.
 - Cell (col c, row r): bleed box at `(x0 + c·(bw + g), y0 + r·(bh + g))`; trim box = bleed box
   inset by `b` on every side.
-- Fit: `3·bw + 2g + 2·|offsetX| ≤ page.w` and `topMargin + 3·bh + 2g ≤ page.h`; with double-sided
-  printing also `|offsetX + backOffsetX| ≤ (page.w − gridW)/2` and the back grid's top/bottom
+- Fit: `3·bw + 2g + 2·|offsetX| ≤ page.w` and `topMargin + 3·bh + 2g ≤ page.h`; and always (back
+  offsets take effect the moment double-sided printing is switched on) `|offsetX + backOffsetX| ≤ (page.w − gridW)/2` and the back grid's top/bottom
   (`topMargin + backOffsetY`) inside the page. Otherwise `problem` names what doesn't fit.
 - Loading saved or imported settings that don't fit resets the culprit: gap, bleed and back
   offsets when those are the cause, otherwise the printer tuning.
@@ -162,7 +162,8 @@ Thickness and colour as today.
   never touch a card.
 - **Corners:** at each trim corner, two arms continuing the trim lines outward from the bleed box,
   each `min(3 mm, 0.4 · g)` long, leaving a visible break between neighbouring cards' marks.
-  Requires `g > 0`.
+  Requires `g > 0`; with no gap the style falls back to Ticks (enforced when settings are loaded or
+  saved).
 
 ## 3. Card backs (double-sided printing)
 
