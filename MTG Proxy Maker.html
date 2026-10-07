@@ -1610,7 +1610,8 @@
         s.paper = returning ? 'letter' : regionPaper();
       }
       printSettings = s;
-      if (t.paper !== s.paper) savePrintSettings({ paper: s.paper });
+      // Callers (start-up, loadTuning) lay the pages out next.
+      if (t.paper !== s.paper) savePrintSettings({ paper: s.paper }, true);
       return printSettings;
     }
 
@@ -1633,8 +1634,12 @@
 
     // Saves the given print settings only, merged into what is saved now: another tab may have changed
     // other settings (or replaced the card back) since this one loaded them, and this tab's older copy
-    // must not write them back. This tab's settings then follow the merged result.
-    function savePrintSettings(patch){
+    // must not write them back. This tab's settings then follow the merged result, and its pages too:
+    // if that changed the layout (say another tab picked A4), fronts, the print dialog's paper size and
+    // back pages are laid out again; other changes (double-sided, card back) redraw the back pages.
+    // Pass `deferLayout` when the caller lays everything out straight after anyway.
+    function savePrintSettings(patch, deferLayout){
+      const before = JSON.stringify(printSettings), beforeLayout = layoutKey();
       const saved = readSavedTuning();
       // Nothing saved yet (or storage unavailable): start from the settings in effect.
       const merged = Object.assign({}, saved || printSettings, patch || {});
@@ -1644,6 +1649,11 @@
       if (merged.cutStyle === 'corners' && !(printSettingsFrom(merged).gapMm > 0)) merged.cutStyle = 'ticks';
       try{ localStorage.setItem('mtgTuning', JSON.stringify(merged)); }catch(_){}
       printSettings = printSettingsFrom(merged);
+      if (deferLayout) return;
+      // applyLayout schedules the back pages; their sync can save again (resolveBackImage), but only
+      // when the saved settings differ from these, so this settles after one round.
+      if (layoutKey() !== beforeLayout) applyLayout();
+      else if (JSON.stringify(printSettings) !== before) scheduleBackPages();
     }
 
     /* ===== Layout calculator ===== */
@@ -4320,12 +4330,13 @@
     let backUploadToken = 0;         // the latest upload chosen; an earlier one finishing later is dropped
     const PENDING_BACKS = 'mtgPendingBackKeys';      // JSON list of pending uploads, every tab's
     const OLD_PENDING_BACK = 'mtgPendingBackKey';    // single records kept by earlier versions
-    let backDraftChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('mtg-proxy-back-draft') : null;
+    const backDraftChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('mtg-proxy-back-draft') : null;
     // Another tab asks before deleting an upload: claim every card back this tab is using (its pending
-    // upload, the dialog's choice, the saved back it prints with), so nothing in use is deleted even
-    // if the shared list is out of date.
+    // upload, the open dialog's choice, the saved back it prints with), so nothing in use is deleted
+    // even if the shared list is out of date. Nothing here deletes a key this says is in use.
     function backKeyInUse(key){
-      return !!key && (key === tunePendingBackKey || key === tuneBackKey || key === printSettings.backImageKey);
+      return !!key && (key === tunePendingBackKey || key === printSettings.backImageKey ||
+        (key === tuneBackKey && tuneModal.classList.contains('open')));
     }
     if (backDraftChannel){
       backDraftChannel.addEventListener('message', function(e){
@@ -4369,7 +4380,9 @@
     // doesn't wait for it. The saved card back is never deleted. Records an earlier version kept (one
     // key, in localStorage or this tab's sessionStorage) go through the same check. Without a way to
     // ask the other tabs nothing is deleted: a leftover file is better than deleting one in use.
-    function discardLeftoverPendingBack(){
+    // `channel` defaults to the tabs' channel; null means there's no way to ask.
+    function discardLeftoverPendingBack(channel){
+      if (channel === undefined) channel = backDraftChannel;
       const old = [];
       try{ const k = localStorage.getItem(OLD_PENDING_BACK); if (k) old.push(k); localStorage.removeItem(OLD_PENDING_BACK); }catch(_){}
       try{ const k = sessionStorage.getItem(OLD_PENDING_BACK); if (k) old.push(k); sessionStorage.removeItem(OLD_PENDING_BACK); }catch(_){}
@@ -4378,7 +4391,6 @@
       const keys = pendingBackList().filter(function(k){ return k !== tunePendingBackKey; });
       if (saved && keys.indexOf(saved) !== -1) updatePendingBackList([], [saved]);   // saved since: no longer pending
       const candidates = keys.filter(function(k){ return k !== saved; });
-      const channel = backDraftChannel;
       if (!candidates.length || !channel) return;
       const claimed = new Set();
       const listen = function(e){ if (e.data && e.data.type === 'claimed' && e.data.key) claimed.add(e.data.key); };
@@ -4467,6 +4479,7 @@
       tuneSession++;
       backUploadToken++;
       discardPendingBack();
+      tuneBackKey = null;
       setTuneBusy(null);
     });
 
@@ -5443,6 +5456,9 @@
     // agrees ("Keep mine" / "Use the file's"; closing the question keeps mine). `theirs` is the file's
     // saved tuning, its card back already re-stored as importedBackKey when the file carried it.
     async function importPrintSettings(theirs, importedBackKey, keptKeys){
+      // Start from what is saved now, not this tab's copy: another tab may have changed the settings
+      // or the card back since, and the comparison and the clean-up below must describe the real ones.
+      loadTuning();
       const saved = readSavedTuning() || {};
       // Our settings as they are in effect, so a field we never saved still compares by its value.
       const mine = Object.assign({}, printSettings, {
@@ -5451,7 +5467,7 @@
         fitMode: savedFitMode, scaleLock: typeof saved.scaleLock === 'undefined' ? true : !!saved.scaleLock
       });
       const keys = ['paper','gapMm','bleedMm','cutStyle','duplex','dfcOnBack','backOffsetXIn','backOffsetYIn','topIn','leftIn','cardWIn','cardHIn','fitMode','scaleLock'];
-      const mineBack = savedBackKey();   // as saved now; another tab may have replaced it
+      const mineBack = printSettings.backImageKey || null;   // as saved (just reloaded)
       // The file's card back: a file without the field leaves ours alone; one whose image isn't here
       // (a lightweight export) would print the default back. The same image under another storage key
       // (it is re-stored on import) is the same back.
@@ -5478,9 +5494,10 @@
         } catch(_){}
       }
       // Card back images nothing uses any more: the file's if we kept ours, ours if the file's replaced it.
-      const inUse = printSettings.backImageKey || null;
+      // Never the back saved now, nor one this tab is using.
+      const inUse = savedBackKey();
       [importedBackKey, mineBack].forEach(function(key){
-        if (key && key !== inUse && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
+        if (key && key !== inUse && !backKeyInUse(key) && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
       });
       syncBackPages();
     }
@@ -5732,7 +5749,7 @@
             if (problem){
               // Find the culprit: the print settings (gap, bleed, back offsets) or the printer tuning.
               if (!computeLayout(Object.assign(currentLayoutSettings(), PLAIN_PRINT, { topIn: top, leftIn: left, cardWIn: w, cardHIn: h })).problem){
-                savePrintSettings(PLAIN_PRINT);
+                savePrintSettings(PLAIN_PRINT, true);   // laid out at the end of loadTuning
                 setStatus('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
               } else {
                 console.warn('Ignoring saved printer tuning: ' + problem);
@@ -5744,7 +5761,7 @@
           }
           // Print settings that don't fit even with the current tuning (e.g. from an imported file).
           if (computeLayout().problem){
-            savePrintSettings(PLAIN_PRINT);
+            savePrintSettings(PLAIN_PRINT, true);   // laid out at the end of loadTuning
             setStatus('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
           }
           if (tuneScaleLock){
@@ -5917,7 +5934,7 @@
                         backOffsetXIn: draft.backOffsetXIn, backOffsetYIn: draft.backOffsetYIn, duplex: duplex };
         if (tuneBackChanged) patch.backImageKey = newBack;
         if (answers) patch.dfcOnBack = answers.dfcOnBack;
-        savePrintSettings(patch);
+        savePrintSettings(patch, true);   // applyTuning lays everything out next
         applyTuning(draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn);
 
         // Persist scaleLock and fitMode merged with other tuning
@@ -5935,7 +5952,7 @@
         // Redraw the back pages with the saved card back before deleting the upload it replaced.
         resolveBackImage().then(function(){
           drawBackPages();
-          if (oldBack && oldBack !== newBack) Promise.resolve(imageStore.delete(oldBack)).catch(function(){});
+          if (oldBack && oldBack !== newBack && oldBack !== savedBackKey() && !backKeyInUse(oldBack)) Promise.resolve(imageStore.delete(oldBack)).catch(function(){});
         });
       });
     }
