@@ -4225,23 +4225,14 @@
 
     async function duplicateToNextEmpty(model, index){
       if (!model || !model.items[index]) return null;
-      const src = model.items[index];
       const pageIdx = pages.indexOf(model);
       if (pageIdx === -1) return null;
-      let slot = nextEmptySlotFrom({ page: pageIdx, index: index + 1 });
-      if (!slot){
-        slot = appendPageSlot();
-      }
-      const dstModel = pages[slot.page];
-      if (!dstModel) return null;
       try{
-        const clone = await cloneItem(src);
+        const clone = await cloneItem(model.items[index]);
         if (!clone) return null;
-        const prev = dstModel.items[slot.index];
-        if (prev && prev !== clone){ discardItem(prev); }
-        dstModel.items[slot.index] = clone;
-        renderCell(dstModel, slot.index);
-        saveState();
+        const placement = createPlacement({ from: { page: pageIdx, index: index + 1 } });
+        const slot = placement.put(clone);
+        setStatus('Duplicated card' + describePlacedPages(placement.pagesUsed));
         return slot;
       }catch(err){
         console.error('Failed to duplicate image', err);
