@@ -393,6 +393,30 @@
 
     .warning { background:#fff7ed; color:#7c2d12; border:1px solid #fdba74; padding:8px 10px; border-radius:8px; font-size:13px; }
 
+    .tune-layout { display: flex; gap: 16px; align-items: flex-start; }
+    .tune-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+    .tune-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 14px; }
+    .seg { display: inline-flex; border: 1px solid #9ca3af; border-radius: 8px; overflow: hidden; }
+    .seg label { position: relative; padding: 5px 10px; font-size: 13px; cursor: pointer; user-select: none; }
+    .seg label + label { border-left: 1px solid #d1d5db; }
+    .seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .seg label:has(input:checked) { background: #2563eb; color: #fff; }
+    .seg label:has(input:disabled) { opacity: .45; cursor: default; }
+    .seg label:has(input:focus-visible) { outline: 2px solid #2563eb; outline-offset: -2px; }
+    .fine-tuning summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 4px 0; }
+    .fine-tuning .warning { margin-bottom: 8px; }
+    .tune-preview { position: relative; width: 150px; flex: none; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.25); border-radius: 2px; overflow: hidden; }
+    .tune-preview .tp-card { position: absolute; background: #374151; box-shadow: inset 0 0 0 0.5px #9ca3af; }
+    .tune-preview .tp-bleed { position: absolute; background: #111827; }
+    .tune-preview .tp-mark { position: absolute; background: #e11d48; min-width: 1px; min-height: 1px; }
+    :root[data-theme="dark"] .seg label + label { border-left-color: #374151; }
+    @media (forced-colors: active){
+      .seg label:has(input:checked) { background: Highlight; color: HighlightText; forced-color-adjust: none; }
+      .seg label:has(input:disabled) { opacity: 1; color: GrayText; }
+      /* The mini sheet is a picture of the printout: keep its own colours. */
+      .tune-preview { forced-color-adjust: none; }
+    }
+
     :root[data-theme="dark"] body { background:#0b0d10; color:#e5e7eb; }
     :root[data-theme="dark"] header { background:#111827; border-bottom-color:#1f2937; }
     :root[data-theme="dark"] .panel { background:#111827; border-color:#1f2937; }
@@ -501,44 +525,78 @@
   <!-- Help modal injected dynamically -->
   <div id="helpModalRoot"></div>
 
-  <!-- Tuning modal -->
+  <!-- Print settings (Help → Print settings) -->
   <div id="tuneModal" class="modal">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="tuneTitle">
-      <h2 id="tuneTitle">Printer Tuning</h2>
-      <div class="warning">⚠️ Only adjust these if your prints look clipped or misaligned. Most printers work with the defaults.</div>
+      <h2 id="tuneTitle">Print settings</h2>
+      <div class="tune-layout">
+        <div class="tune-fields">
+          <div class="tune-row"><span>Paper</span>
+            <div class="seg" role="radiogroup" aria-label="Paper">
+              <label><input type="radio" name="paper" value="letter">Letter</label>
+              <label><input type="radio" name="paper" value="a4">A4</label>
+            </div>
+          </div>
+          <div class="tune-row"><span>Gap between cards</span>
+            <div class="seg" role="radiogroup" aria-label="Gap between cards">
+              <label><input type="radio" name="gap" value="0">0</label>
+              <label><input type="radio" name="gap" value="1">1 mm</label>
+              <label><input type="radio" name="gap" value="2">2 mm</label>
+              <label><input type="radio" name="gap" value="3">3 mm</label>
+            </div>
+          </div>
+          <div class="tune-row"><span title="Extra border colour around each card so slightly-off cuts don't show white">Bleed</span>
+            <div class="seg" role="radiogroup" aria-label="Bleed">
+              <label><input type="radio" name="bleed" value="0">Off</label>
+              <label><input type="radio" name="bleed" value="1">1 mm</label>
+              <label><input type="radio" name="bleed" value="2">2 mm</label>
+              <label><input type="radio" name="bleed" value="3">3 mm</label>
+            </div>
+          </div>
+          <div class="tune-row"><span>Cut lines</span>
+            <div class="seg" role="radiogroup" aria-label="Cut-line style">
+              <label title="Short marks in the page margin"><input type="radio" name="cutStyle" value="ticks">Ticks</label>
+              <label title="Lines across the sheet through gaps and margins — for trimmers"><input type="radio" name="cutStyle" value="full">Full lines</label>
+              <label title="L-marks at each card's corners — needs a gap"><input type="radio" name="cutStyle" value="corners">Corners</label>
+            </div>
+          </div>
+          <p class="footnote" id="cutStyleHint" hidden>Corners need a gap between cards.</p>
 
-      <!-- Three-column grid; scale lock pinned right -->
-      <div class="panel" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;">
-        <label class="field" title="Adds extra white space above the grid so printers that can't print to the edge don't clip.">
-          Top margin (in)
-          <input id="tuneTopIn" type="number" step="0.01" min="0" value="0.25" style="width:120px">
-        </label>
-        <label class="field" title="Shifts the entire grid left/right relative to the page center. Positive = right.">
-          Horizontal offset (in)
-          <input id="tuneLeftIn" type="number" step="0.01" value="0.00" style="width:120px">
-        </label>
-        <label class="field" title="Exact card width in inches (affects grid and cut marks).">
-          Card width (in)
-          <input id="tuneCardWIn" type="number" step="0.001" min="2.400" max="2.600" style="width:120px">
-        </label>
-        <label class="field" title="Exact card height in inches (affects grid and cut marks).">
-          Card height (in)
-          <input id="tuneCardHIn" type="number" step="0.001" min="3.400" max="3.600" style="width:120px">
-        </label>
-
-        <label class="field" style="grid-column: 1 / span 2;" title="Change how images scale inside each cell.">
-          <strong>Image fit mode</strong>
-          <select id="fitMode">
-            <option value="cover" selected>Cover (fill & crop)</option>
-            <option value="contain">Contain (fit inside, may letterbox)</option>
-          </select>
-        </label>
-
-        <!-- Scale lock moved to the right, spanning both input rows -->
-        <label class="field" style="grid-column: 3; grid-row: 1 / span 2; align-self:end; justify-self:end;" title="When checked, width/height stay proportional to 2.5×3.5 while you edit.">
-          <input id="tuneScaleLock" type="checkbox" checked />
-          Scale (keep 2.5×3.5 ratio)
-        </label>
+          <details class="fine-tuning">
+            <summary>Printer fine-tuning</summary>
+            <div class="warning">⚠️ Only adjust these if your prints look clipped or misaligned. Most printers work with the defaults.</div>
+            <div class="panel" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;">
+              <label class="field" title="Adds extra white space above the grid so printers that can't print to the edge don't clip.">
+                Top margin (in)
+                <input id="tuneTopIn" type="number" step="0.01" min="0" value="0.25" style="width:120px">
+              </label>
+              <label class="field" title="Shifts the entire grid left/right relative to the page center. Positive = right.">
+                Horizontal offset (in)
+                <input id="tuneLeftIn" type="number" step="0.01" value="0.00" style="width:120px">
+              </label>
+              <label class="field" title="Exact card width in inches (affects grid and cut marks).">
+                Card width (in)
+                <input id="tuneCardWIn" type="number" step="0.001" min="2.400" max="2.600" style="width:120px">
+              </label>
+              <label class="field" title="Exact card height in inches (affects grid and cut marks).">
+                Card height (in)
+                <input id="tuneCardHIn" type="number" step="0.001" min="3.400" max="3.600" style="width:120px">
+              </label>
+              <label class="field" style="grid-column: 1 / span 2;" title="Change how images scale inside each cell.">
+                <strong>Image fit mode</strong>
+                <select id="fitMode">
+                  <option value="cover" selected>Cover (fill & crop)</option>
+                  <option value="contain">Contain (fit inside, may letterbox)</option>
+                </select>
+              </label>
+              <label class="field" style="grid-column: 3; grid-row: 1 / span 2; align-self:end; justify-self:end;" title="When on, width/height stay proportional to 2.5×3.5 while you edit.">
+                <input id="tuneScaleLock" type="checkbox" checked />
+                Keep 2.5×3.5 ratio
+              </label>
+            </div>
+          </details>
+        </div>
+        <div id="tunePreview" class="tune-preview" aria-hidden="true"></div>
       </div>
 
       <div id="tuneError" class="warning" role="alert" hidden></div>
@@ -1230,7 +1288,7 @@
 
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="themeBtn" class="secondary" title="Toggle dark mode">🌙</button>
-              <button id="tuneBtn" class="secondary" title="Printer tuning (margins/offset)">Advanced</button>
+              <button id="tuneBtn" class="secondary" title="Paper, gaps, bleed, cut lines and printer tuning">Print settings</button>
               <div class="right"></div>
               <button id="closeHelpBtn" class="secondary">Close</button>
               <div class="right footnote">© Occam Industries</div>
@@ -4285,12 +4343,67 @@
       tuneBtn.addEventListener('click', openTune);
     }
 
+    function tuneRadio(name){ return tuneModal.querySelector('input[name="' + name + '"]:checked'); }
+    function setTuneRadio(name, value){
+      const r = tuneModal.querySelector('input[name="' + name + '"][value="' + value + '"]');
+      if (r) r.checked = true;
+    }
+
+    // The settings as currently entered in the dialog (not yet saved).
+    function readTuneDraft(){
+      let w = parseFloat(tuneCardWIn.value), h = parseFloat(tuneCardHIn.value);
+      if (tuneScaleLock && tuneScaleLock.checked){
+        if (isFinite(w) && w > 0) h = +(w / BASE_W_IN * BASE_H_IN).toFixed(4);
+        else if (isFinite(h) && h > 0) w = +(h / BASE_H_IN * BASE_W_IN).toFixed(4);
+      }
+      return Object.assign(currentLayoutSettings(), {
+        paper: tuneRadio('paper') ? tuneRadio('paper').value : printSettings.paper,
+        gapMm: Number(tuneRadio('gap') ? tuneRadio('gap').value : printSettings.gapMm),
+        bleedMm: Number(tuneRadio('bleed') ? tuneRadio('bleed').value : printSettings.bleedMm),
+        cutStyle: tuneRadio('cutStyle') ? tuneRadio('cutStyle').value : printSettings.cutStyle,
+        topIn: parseFloat(tuneTopIn.value), leftIn: parseFloat(tuneLeftIn.value), cardWIn: w, cardHIn: h
+      });
+    }
+
+    // Corners need a gap; with no gap, switch a Corners choice to Ticks.
+    function refreshCutStyleChoices(){
+      const noGap = !(Number(tuneRadio('gap') ? tuneRadio('gap').value : 0) > 0);
+      const corners = tuneModal.querySelector('input[name="cutStyle"][value="corners"]');
+      corners.disabled = noGap;
+      if (noGap && corners.checked) setTuneRadio('cutStyle', 'ticks');
+      document.getElementById('cutStyleHint').hidden = !noGap;
+    }
+
+    // Mini sheet preview of the draft settings.
+    function renderTunePreview(){
+      const box = document.getElementById('tunePreview');
+      const draft = readTuneDraft();
+      if (![draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn].every(isFinite)) return;
+      const L = computeLayout(draft);
+      const scale = box.clientWidth / L.page.w;
+      box.style.height = (L.page.h * scale) + 'px';
+      box.innerHTML = '';
+      const add = function(cls, r){
+        const el = document.createElement('div'); el.className = cls;
+        el.style.left = (r.x * scale) + 'px'; el.style.top = (r.y * scale) + 'px';
+        el.style.width = (r.w * scale) + 'px'; el.style.height = (r.h * scale) + 'px';
+        box.appendChild(el);
+      };
+      L.cards.forEach(function(c){ if (L.bleedIn > 0) add('tp-bleed', c.bleed); add('tp-card', c.trim); });
+      L.cutMarks.forEach(function(m){ add('tp-mark', m); });
+    }
+
     function openTune(){
       document.getElementById('tuneError').hidden = true;
       tuneTopIn.value   = readInchesVar('--grid-top', .25).toFixed(2);
       tuneLeftIn.value  = readInchesVar('--grid-left', 0).toFixed(2);
       tuneCardWIn.value = readInchesVar('--cell-w', 2.4750).toFixed(4);
       tuneCardHIn.value = readInchesVar('--cell-h', 3.4650).toFixed(4);
+      setTuneRadio('paper', printSettings.paper);
+      setTuneRadio('gap', String(printSettings.gapMm));
+      setTuneRadio('bleed', String(printSettings.bleedMm));
+      setTuneRadio('cutStyle', printSettings.cutStyle);
+      tuneModal.querySelector('details.fine-tuning').open = false;
 
       try{
         const t = JSON.parse(localStorage.getItem('mtgTuning') || '{}');
@@ -4299,33 +4412,27 @@
         if (tuneScaleLock) tuneScaleLock.checked = true;
       }
 
+      refreshCutStyleChoices();
       openModal(tuneModal);
-      tuneTopIn.focus();
+      renderTunePreview();
+      const first = tuneRadio('paper'); if (first) first.focus();
     }
+
+    tuneModal.addEventListener('change', function(e){
+      if (e.target && e.target.name === 'gap') refreshCutStyleChoices();
+      renderTunePreview();
+    });
+    tuneModal.addEventListener('input', function(){ renderTunePreview(); });
 
     bindTuneButton();
 
     if (saveTuneBtn){
       saveTuneBtn.addEventListener('click', function(){
-        let w = parseFloat(tuneCardWIn.value);
-        let h = parseFloat(tuneCardHIn.value);
-
-        // If locked, enforce 2.5×3.5 ratio using whichever field is valid
-        if (tuneScaleLock && tuneScaleLock.checked){
-          if (isFinite(w) && w > 0){
-            const s = w / BASE_W_IN;
-            h = +(s * BASE_H_IN).toFixed(4);
-            tuneCardHIn.value = h.toFixed(4);
-          } else if (isFinite(h) && h > 0){
-            const s = h / BASE_H_IN;
-            w = +(s * BASE_W_IN).toFixed(4);
-            tuneCardWIn.value = w.toFixed(4);
-          }
-        }
-
-        const topIn = parseFloat(tuneTopIn.value), leftIn = parseFloat(tuneLeftIn.value);
+        const draft = readTuneDraft();
+        if (isFinite(draft.cardWIn)) tuneCardWIn.value = draft.cardWIn.toFixed(4);
+        if (isFinite(draft.cardHIn)) tuneCardHIn.value = draft.cardHIn.toFixed(4);
         const tuneError = document.getElementById('tuneError');
-        const problem = tuningProblem(topIn, leftIn, w, h);
+        const problem = computeLayout(draft).problem;
         if (problem){
           tuneError.textContent = problem;
           tuneError.hidden = false;
@@ -4333,7 +4440,8 @@
         }
         tuneError.hidden = true;
 
-        applyTuning(topIn, leftIn, w, h);
+        savePrintSettings({ paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle });
+        applyTuning(draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn);
 
         // Persist scaleLock and fitMode merged with other tuning
         try{
@@ -4354,6 +4462,11 @@
         tuneCardWIn.value = '2.4750';
         tuneCardHIn.value = '3.4650';
         if (tuneScaleLock) tuneScaleLock.checked = true;
+        setTuneRadio('gap', '0');
+        setTuneRadio('bleed', '0');
+        setTuneRadio('cutStyle', 'ticks');
+        refreshCutStyleChoices();
+        renderTunePreview();
       });
     }
 
