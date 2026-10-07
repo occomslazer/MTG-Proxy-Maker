@@ -3853,6 +3853,7 @@
     // already be placed elsewhere. Returns the slot.
     function rippleInsert(p, item){
       if (!Number.isInteger(p) || p < 0 || p > totalPositions()) throw new RangeError('rippleInsert: bad position ' + p);
+      if (!item) throw new TypeError('rippleInsert: no card to insert');
       clearInternalClipboard();
       let e = p;
       while (e < totalPositions() && itemAtPos(e)) e++;

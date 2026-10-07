@@ -275,7 +275,7 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
   move the cards at p…e−1 to p+1…e and place at p. If there is no empty position after p, append a
   page and use its first cell as e.
 - **Remove at p:** clear p; let e be the first empty position after p (or the end of the layout);
-  move the cards at p+1…e−1 back to p…e−2. If that leaves the last page empty, that page is removed
+  move the cards at p+1…e−1 back to p…e−2. If that empties the last page, that page is removed
   (at least one page remains); blank pages the user added earlier stay.
 - Card objects are moved, never cloned or discarded (except the removed card), so stored images
   survive. A pending internal C/X copy or cut is cancelled.
