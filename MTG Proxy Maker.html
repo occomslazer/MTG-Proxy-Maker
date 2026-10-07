@@ -4478,13 +4478,22 @@
                 <label class="field"><input type="radio" name="pdfQuality" value="jpeg" checked /> High-quality JPEG (smaller file)</label>
                 <label class="field"><input type="radio" name="pdfQuality" value="png" /> Original PNG (exact pixels, large file)</label>
                 <span id="pdfEstimate" class="footnote" role="status" aria-live="polite">Estimating size…</span>
+                <div id="pdfNote" class="warning" hidden></div>
                 <span class="footnote">In the print dialog choose <b>Actual size</b> (100%), not "Fit to page".</span>
               </div>
             </div>
             <div id="exportError" class="warning" role="alert" hidden></div>
+            <div id="pdfIncomplete" class="warning" role="alert" hidden>
+              <p id="pdfIncompleteText" style="margin:0 0 8px"></p>
+              <div style="display:flex;gap:8px;">
+                <button id="pdfSaveAnywayBtn">Save anyway</button>
+                <button id="pdfDiscardBtn" class="secondary">Cancel</button>
+              </div>
+            </div>
             <div style="display:flex;gap:8px;align-items:center;">
               <button id="doExportBtn">Export</button>
-              <span id="exportProgress" class="footnote" role="status" aria-live="polite" hidden></span>
+              <span id="exportLive" class="footnote" role="status" aria-live="polite"></span>
+              <span id="exportCount" class="footnote" hidden></span>
               <div class="right"></div>
               <button id="closeExportBtn" class="secondary">Close</button>
             </div>
@@ -4495,41 +4504,85 @@
       exportModal = modal;
       setupModalBackdrop(exportModal);
 
-      // PDF shows its options (and their size estimate) only while it's the chosen export.
+      // PDF shows its options (and their size estimate) only while it's the chosen export. A built PDF
+      // waiting on "Save anyway" was built with the old choice, so it goes.
       exportModal.addEventListener('change', function(e){
         if (e.target.name !== 'exportMode' && e.target.name !== 'pdfQuality') return;
         showExportError('');
-        syncPdfOptions();
+        clearPendingPdf();
+        if (e.target.name === 'exportMode') syncPdfOptions();
+        else renderPdfEstimate();
+      });
+      // Closing the dialog (Close/Cancel, Esc, backdrop) cancels a PDF being built, the size estimate and
+      // a PDF waiting on "Save anyway"; an export still running then stays quiet.
+      exportModal.addEventListener('modalclose', function(){
+        exportSession++;
+        if (pdfBuildController) pdfBuildController.abort();
+        cancelPdfEstimate();
+        if (pendingPdf) setStatus('PDF export cancelled');
+        clearPendingPdf();
       });
 
-      const closeBtn = exportModal.querySelector('#closeExportBtn');
-      if (closeBtn){
-        closeBtn.addEventListener('click', function(){ closeModal(exportModal); });
-      }
-
-      const doBtn = exportModal.querySelector('#doExportBtn');
-      if (doBtn){
-        doBtn.addEventListener('click', async function(){
-          const modeEl = exportModal.querySelector('input[name="exportMode"]:checked');
-          const mode = modeEl ? modeEl.value : 'full';
-          doBtn.disabled = true;
-          doBtn.textContent = 'Exporting…';
-          showExportError('');
-          try {
-            await performExport(mode);
-            closeModal(exportModal);
-          } catch(err){
-            console.error('Export failed', err);
-            setStatus('Export failed: ' + (err.message || err));
-            showExportError('Export failed: ' + (err.message || err));
-          } finally {
-            doBtn.disabled = false;
-            doBtn.textContent = 'Export';
-          }
-        });
-      }
+      exportModal.querySelector('#closeExportBtn').addEventListener('click', function(){ closeModal(exportModal); });
+      exportModal.querySelector('#doExportBtn').addEventListener('click', startExport);
+      exportModal.querySelector('#pdfSaveAnywayBtn').addEventListener('click', function(){
+        if (!pendingPdf) return;
+        const result = pendingPdf.result;
+        clearPendingPdf();
+        savePdf(result);
+        closeModal(exportModal);
+      });
+      exportModal.querySelector('#pdfDiscardBtn').addEventListener('click', function(){
+        clearPendingPdf();
+        setStatus('PDF export cancelled');
+        exportModal.querySelector('#doExportBtn').focus();
+      });
 
       return exportModal;
+    }
+
+    var exportBusy = false;   // an export is running: Export does nothing until it ends
+    var exportSession = 0;    // bumped when the dialog closes; an export started before then stays quiet
+
+    // Runs the chosen export. While it runs, Export is disabled and focus sits on Close (Cancel for a
+    // PDF, as closing cancels it). Afterwards the dialog closes, or shows what went wrong with focus on
+    // the control to act on.
+    async function startExport(){
+      if (exportBusy || !exportModal) return;
+      const m = exportModal, doBtn = m.querySelector('#doExportBtn'), closeBtn = m.querySelector('#closeExportBtn');
+      const modeEl = m.querySelector('input[name="exportMode"]:checked');
+      const mode = modeEl ? modeEl.value : 'full';
+      const session = exportSession;
+      exportBusy = true;
+      showExportError('');
+      clearPendingPdf();
+      doBtn.disabled = true;
+      doBtn.textContent = 'Exporting…';
+      if (mode === 'pdf') closeBtn.textContent = 'Cancel';
+      closeBtn.focus();
+      let focusAfter = null;
+      try {
+        if (mode === 'pdf'){
+          if (await exportPdfFromDialog(session) === 'incomplete') focusAfter = m.querySelector('#pdfSaveAnywayBtn');
+        } else {
+          await performExport(mode);
+          if (session === exportSession) closeModal(m);
+        }
+      } catch(err){
+        if (err && err.name === 'AbortError'){
+          setStatus('PDF export cancelled');
+        } else {
+          console.error('Export failed', err);
+          setStatus('Export failed: ' + (err.message || err));
+          if (session === exportSession){ showExportError('Export failed: ' + (err.message || err)); focusAfter = doBtn; }
+        }
+      } finally {
+        exportBusy = false;
+        doBtn.disabled = false;
+        doBtn.textContent = 'Export';
+        closeBtn.textContent = 'Close';
+        if (focusAfter && session === exportSession && m.classList.contains('open')) focusAfter.focus();
+      }
     }
 
     // An export problem shown in the dialog itself (empty text hides it).
@@ -4540,13 +4593,13 @@
       el.hidden = !text;
     }
 
-    // The PDF options follow the chosen export; their size estimate is refreshed while PDF is chosen.
+    // The PDF options follow the chosen export; their size estimate is worked out while PDF is chosen.
     function syncPdfOptions(){
       if (!exportModal) return;
       const isPdf = (exportModal.querySelector('input[name="exportMode"]:checked') || {}).value === 'pdf';
       exportModal.querySelector('#pdfOptions').hidden = !isPdf;
-      if (isPdf) updatePdfEstimate();
-      else pdfEstimateToken++;   // an estimate still running is no longer wanted
+      if (isPdf) refreshPdfEstimate();
+      else cancelPdfEstimate();
     }
 
     // Must match IMAGE_CACHE in service-worker.js, which serves Scryfall card images from it.
@@ -4659,7 +4712,6 @@
     }
 
     async function performExport(mode){
-      if (mode === 'pdf') return exportPdf();
       const exportData = await buildExportData(mode);
       const json = JSON.stringify(exportData);
       const blob = new Blob([json], { type: 'application/json' });
@@ -4685,10 +4737,21 @@
     }
 
     /* ===== PDF export ===== */
+    // Whether the app was opened as a file (README step 1). Files next to it (the default card back)
+    // can't be read then, though scripts next to it still load. A function, so tests can stand in for it.
+    function isFileProtocol(){ return location.protocol === 'file:'; }
+
+    var PDF_FILE_BACK_NOTE = 'The default card back can\'t be read when the app is opened as a file. Upload a card back in Print settings, or open the app from a web server or the hosted site.';
+
     // jsPDF (vendor/, see vendor/README.md), loaded on first use and precached by the service worker,
-    // so it works offline. A failed load can be retried.
+    // so it works offline. A failed load can be retried; the error names the likely cause.
     var JSPDF_SRC = 'vendor/jspdf.umd.min.js';
     var jsPdfPromise = null;
+    function jsPdfLoadError(){
+      if (isFileProtocol()) return 'Couldn\'t load the PDF library: vendor/jspdf.umd.min.js wasn\'t found next to the app. Keep the vendor folder next to MTG Proxy Maker.html, or use the hosted site.';
+      if (navigator.onLine === false) return 'Couldn\'t load the PDF library: it isn\'t cached yet. Open the app once while online, then try again.';
+      return 'Couldn\'t load the PDF library. Check your internet connection, then try again.';
+    }
     function loadJsPdf(){
       if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf);
       if (!jsPdfPromise){
@@ -4703,12 +4766,22 @@
           s.onerror = function(){
             s.remove();
             jsPdfPromise = null;
-            reject(new Error('Couldn\'t load the PDF library. Check your connection, then try again.'));
+            reject(new Error(jsPdfLoadError()));
           };
           document.head.appendChild(s);
         });
       }
       return jsPdfPromise;
+    }
+
+    function pdfCancelled(){ const e = new Error('PDF export cancelled'); e.name = 'AbortError'; return e; }
+    function checkPdfCancelled(signal){ if (signal && signal.aborted) throw pdfCancelled(); }
+
+    // Everything that decides what the PDF draws, read once as it starts, so a change while it builds
+    // (the M key, Print settings) can't give it pages of two kinds.
+    function pdfSnapshot(layout){
+      return { layout: layout, fit: savedFitMode, cutMarks: !!(toggleCutMarks && toggleCutMarks.checked),
+               duplex: !!printSettings.duplex, dfcOnBack: printSettings.dfcOnBack };
     }
 
     // Where a card's image comes from: `id` names the image (its storage key or URL; each image is
@@ -4719,48 +4792,82 @@
       return { id: 'url:' + (item.url || ''), url: item.url || null, color: color };
     }
 
-    // What prints behind a card (backSrcFor): its back face, the default card back or an uploaded one.
-    function pdfBackSource(item){
-      const src = backSrcFor(item);
+    // What prints behind a card, decided as backSrcFor() does but with the snapshot's DFC choice: its
+    // back face, the default card back or an uploaded one. Opened as a file, the default back can't be
+    // read (`fileBack`).
+    function pdfBackSource(item, snap){
+      const src = (snap.dfcOnBack === true && item.type === 'url' && typeof item.back === 'string' && item.back) ? item.back : backImageUrl;
       if (!src) return null;
       let color = null;
       try{ color = borderColorCache.get(new URL(src, document.baseURI).href) || null; }catch(_){}
       if (src === backImageUrl && src !== DEFAULT_BACK_URL && printSettings.backImageKey){
         return { id: 'stored:' + printSettings.backImageKey, key: printSettings.backImageKey, mime: null, color: color };
       }
-      return { id: 'url:' + src, url: src, color: color };
+      return { id: 'url:' + src, url: src, color: color, fileBack: src === DEFAULT_BACK_URL && isFileProtocol() };
     }
 
-    // The sheets a print or PDF contains, in order: each front page, then its back when double-sided,
-    // with each cell's image source (null when empty). Like printing, waits (at most 10 s) for back-face
-    // lookups and the card back.
-    async function pdfSheets(){
+    // The sheets of the PDF, in print order: each front page, then its back when double-sided, with
+    // each cell's image source (null when empty). When double-sided, back-face lookups and the card
+    // back are waited for first (at most 10 s, as the Print button waits).
+    async function pdfSheets(snap){
       await imageStoreReady;
-      if (printSettings.duplex){
+      if (snap.duplex){
         await Promise.race([backPagesReady(), new Promise(function(r){ setTimeout(r, 10000); })]).catch(function(err){
           console.warn('Back pages may be incomplete', err);
         });
       }
       const sheets = [];
       pages.forEach(function(model){
-        const front = [], back = [];
-        for (let i = 0; i < CELLS_PER_PAGE; i++){
-          const item = model.items[i];
-          front.push(item ? pdfFrontSource(item) : null);
-          back.push(item ? pdfBackSource(item) : null);
-        }
+        const front = [];
+        for (let i = 0; i < CELLS_PER_PAGE; i++) front.push(model.items[i] ? pdfFrontSource(model.items[i]) : null);
         sheets.push({ back: false, cells: front });
-        if (printSettings.duplex) sheets.push({ back: true, cells: back });
+        if (!snap.duplex) return;
+        const back = [];
+        for (let i = 0; i < CELLS_PER_PAGE; i++) back.push(model.items[i] ? pdfBackSource(model.items[i], snap) : null);
+        sheets.push({ back: true, cells: back });
       });
       return sheets;
     }
 
-    async function readPdfSource(c){
-      if (c.key) return imageStore.getBlob(c.key, c.mime || null);
-      if (!c.url) throw new Error('No image');
-      const r = await fetch(c.url);
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.blob();
+    // Why an image couldn't be read: 'fileBack' (the default card back, app opened as a file),
+    // 'stored' (an upload no longer in this browser), 'remote' (couldn't be downloaded: offline, a site
+    // that blocks copying, or no answer in time) or 'broken' (not an image the browser can decode).
+    function pdfReadError(cause, err){
+      const e = new Error('Couldn\'t read an image (' + cause + ')');
+      e.pdfCause = cause;
+      if (err) e.cause = err;
+      return e;
+    }
+
+    // Runs read(signal) with a signal that aborts after PDF_READ_TIMEOUT_MS, or when `signal` does.
+    var PDF_READ_TIMEOUT_MS = 30000;
+    async function withReadTimeout(signal, read){
+      const ctl = new AbortController();
+      const timer = setTimeout(function(){ ctl.abort(); }, PDF_READ_TIMEOUT_MS);
+      const stop = function(){ ctl.abort(); };
+      if (signal) signal.addEventListener('abort', stop);
+      try{ return await read(ctl.signal); }
+      finally{ clearTimeout(timer); if (signal) signal.removeEventListener('abort', stop); }
+    }
+
+    // An image file, within the time limit. Cancelling (`signal`) throws an AbortError.
+    async function readPdfSource(c, signal){
+      if (c.fileBack) throw pdfReadError('fileBack');
+      try{
+        return await withReadTimeout(signal, async function(s){
+          if (c.key){
+            const gaveUp = new Promise(function(_, reject){ s.addEventListener('abort', function(){ reject(new Error('Timed out')); }, { once: true }); });
+            return await Promise.race([imageStore.getBlob(c.key, c.mime || null).catch(function(err){ throw pdfReadError('stored', err); }), gaveUp]);
+          }
+          if (!c.url) throw pdfReadError('remote');
+          const r = await fetch(c.url, { signal: s });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return await r.blob();
+        });
+      }catch(err){
+        checkPdfCancelled(signal);
+        throw err && err.pdfCause ? err : pdfReadError('remote', err);
+      }
     }
 
     // What an image file is, from its first bytes: 'jpeg', 'png' or 'other'.
@@ -4787,11 +4894,37 @@
       return 1;
     }
 
+    // Whether an ICC profile is sRGB, by its description tag ("sRGB IEC61966-2.1" and the like), in
+    // either the v2 ('desc') or v4 ('mluc') form. Anything unreadable counts as not sRGB.
+    function iccIsSrgb(p){
+      const u32 = function(o){ return p[o] * 16777216 + p[o + 1] * 65536 + p[o + 2] * 256 + p[o + 3]; };
+      const str = function(o, n){ return String.fromCharCode.apply(null, p.subarray(o, o + n)); };
+      if (p.length < 132) return false;
+      for (let k = 0, n = u32(128); k < n && 144 + k * 12 <= p.length; k++){
+        const e = 132 + k * 12;
+        if (str(e, 4) !== 'desc') continue;
+        const off = u32(e + 4), size = u32(e + 8);
+        if (size < 12 || off + size > p.length) return false;
+        let text = '';
+        if (str(off, 4) === 'desc') text = str(off + 12, Math.min(u32(off + 8), size - 12));
+        else if (str(off, 4) === 'mluc'){
+          for (let r = 0, count = u32(off + 8); r < count && off + 16 + r * 12 + 12 <= off + size; r++){
+            const rec = off + 16 + r * 12, at = off + u32(rec + 8), len = u32(rec + 4);
+            for (let q = at; q + 1 < Math.min(at + len, off + size); q += 2) text += String.fromCharCode(p[q] * 256 + p[q + 1]);
+          }
+        }
+        return /sRGB/.test(text);
+      }
+      return false;
+    }
+
     // A JPEG a PDF shows exactly as the browser does, so it can go in as it is: baseline or progressive,
-    // 8-bit greyscale or colour, upright (PDF viewers ignore EXIF rotation) and the size the browser
-    // decoded. Others (CMYK, rotated, ...) are redrawn.
+    // 8-bit greyscale or colour, upright (PDF viewers ignore EXIF rotation), no colour profile other
+    // than sRGB (the browser converts others; the PDF wouldn't) and the size the browser decoded.
+    // Others (CMYK, rotated, Display P3, ...) are redrawn.
     function jpegEmbeddable(b, w, h){
       let i = 2, sof = null, orientation = 1;
+      const icc = [];   // APP2 "ICC_PROFILE" chunks, [sequence number, data]
       while (i + 4 <= b.length && b[i] === 0xFF){
         const marker = b[i + 1];
         if (marker === 0xFF){ i++; continue; }
@@ -4799,10 +4932,18 @@
         const len = b[i + 2] * 256 + b[i + 3], seg = i + 4;
         if (marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC){
           sof = { type: marker, bits: b[seg], h: b[seg + 1] * 256 + b[seg + 2], w: b[seg + 3] * 256 + b[seg + 4], comps: b[seg + 5] };
-        }else if (marker === 0xE1 && b[seg] === 0x45 && b[seg + 1] === 0x78 && b[seg + 2] === 0x69 && b[seg + 3] === 0x66){   // "Exif"
+        }else if (marker === 0xE1 && String.fromCharCode(b[seg], b[seg + 1], b[seg + 2], b[seg + 3]) === 'Exif'){
           orientation = exifOrientation(b, seg + 6, i + 2 + len);
+        }else if (marker === 0xE2 && String.fromCharCode.apply(null, b.subarray(seg, seg + 11)) === 'ICC_PROFILE'){
+          icc.push([b[seg + 12], b.subarray(seg + 14, i + 2 + len)]);
         }
         i += 2 + len;
+      }
+      if (icc.length){
+        icc.sort(function(x, y){ return x[0] - y[0]; });
+        const profile = new Uint8Array(icc.reduce(function(n, c){ return n + c[1].length; }, 0));
+        icc.reduce(function(at, c){ profile.set(c[1], at); return at + c[1].length; }, 0);
+        if (!iccIsSrgb(profile)) return false;
       }
       return !!sof && sof.type <= 0xC2 && sof.bits === 8 && (sof.comps === 1 || sof.comps === 3) &&
         orientation === 1 && sof.w === w && sof.h === h;
@@ -4822,13 +4963,14 @@
       return false;
     }
 
-    // Decoded as the page shows it (EXIF rotation applied). Formats createImageBitmap can't read from a
-    // file directly (SVG) go through an <img>.
+    // Decoded as the page shows it (EXIF rotation applied, colours in sRGB). Formats createImageBitmap
+    // can't read from a file directly (SVG) go through an <img>.
     async function decodePdfImage(blob){
       try{ return await createImageBitmap(blob); }
       catch(err){
         const url = URL.createObjectURL(blob);
         try{ const img = new Image(); img.src = url; await img.decode(); return await createImageBitmap(img); }
+        catch(_){ throw pdfReadError('broken', err); }
         finally{ URL.revokeObjectURL(url); }
       }
     }
@@ -4839,8 +4981,8 @@
     // printed page (the bleed colour, or white paper without bleed) and encoded at 0.92; in PNG quality
     // PNGs go in as they are and other images are redrawn as PNG. `redraw` forces redrawing. One image
     // is decoded at a time and released straight after.
-    async function preparePdfImage(c, quality, bleed, redraw){
-      const blob = await readPdfSource(c);
+    async function preparePdfImage(c, quality, bleed, redraw, signal){
+      const blob = await readPdfSource(c, signal);
       const bytes = new Uint8Array(await blob.arrayBuffer());
       const bmp = await decodePdfImage(blob);
       try{
@@ -4860,7 +5002,7 @@
           // the background, which would stall a big deck's export.
           const url = cv.toDataURL(asJpeg ? 'image/jpeg' : 'image/png', 0.92);
           const out = url.startsWith(asJpeg ? 'data:image/jpeg' : 'data:image/png') ? dataUrlToBlob(url) : null;
-          if (!out) throw new Error('Couldn\'t encode the image');
+          if (!out) throw pdfReadError('broken');
           return { data: new Uint8Array(await out.arrayBuffer()), format: asJpeg ? 'JPEG' : 'PNG', w: w, h: h, color: color };
         }finally{ cv.width = 0; cv.height = 0; }
       }finally{ bmp.close(); }
@@ -4873,29 +5015,39 @@
       doc.internal.write([m[1], m[2], m[3]].map(function(v){ return +(v / 255).toFixed(5); }).join(' ') + ' rg');
     }
 
-    // Draws every sheet from computeLayout(), as printing does: bleed boxes filled with the card's border
-    // colour; each image fitted (savedFitMode), centred in its trim box and clipped to it, rounded like
-    // the printed card when there's no bleed; cut marks on fronts as printed. Positions are exactly the
-    // calculator's inches × 72 (the browser print snaps fronts to whole CSS pixels, up to ~0.006″ off).
-    // Each distinct image is embedded once; one that can't be read leaves its cells empty.
-    // Resolves with { blob, sheets, missing } (missing: how many cells were left empty).
-    async function buildPdf(quality, onProgress){
-      const lib = await loadJsPdf();
-      const sheets = await pdfSheets();
+    // Draws every sheet from the layout, as printing does: bleed boxes filled with the card's border
+    // colour; each image fitted (the saved fit mode), centred in its trim box and clipped to it, rounded
+    // like the printed card when there's no bleed; cut marks on fronts as printed. Positions are exactly
+    // the calculator's inches × 72 (the browser print snaps fronts to whole CSS pixels, up to ~0.006″
+    // off). Settings are read once, at the start (pdfSnapshot). Each distinct image is embedded once; one
+    // that can't be read leaves its cards blank.
+    // options: { signal (an AbortSignal that cancels the build), onProgress(n, total) }.
+    // Resolves with { blob, sheets, missingImages, missingCards, gaps: { cause: { images, cards } } }.
+    async function buildPdf(quality, options){
+      options = options || {};
+      const signal = options.signal || null;
       const layout = computeLayout();
       if (layout.problem) throw new Error(layout.problem);
-      const PT = 72, R = CARD_CORNER_PX / 96 * PT, fit = savedFitMode, bleed = layout.bleedIn > 0;
+      const snap = pdfSnapshot(layout);
+      const lib = await loadJsPdf();
+      checkPdfCancelled(signal);
+      const sheets = await pdfSheets(snap);
+      checkPdfCancelled(signal);
+      const PT = 72, R = CARD_CORNER_PX / 96 * PT, bleed = layout.bleedIn > 0;
       const size = [layout.page.w * PT, layout.page.h * PT];
       const doc = new lib.jsPDF({ unit: 'pt', format: size, orientation: 'portrait', compress: true, putOnlyUsedFonts: true });
       const total = new Set(sheets.flatMap(function(s){ return s.cells.filter(Boolean).map(function(c){ return c.id; }); })).size;
       const images = new Map();   // id -> prepared image, or null when it couldn't be read
+      const unread = new Map();   // id -> { cause, cards }
       const prepare = function(c, redraw){
-        return preparePdfImage(c, quality, bleed, redraw).then(function(im){ im.alias = 'img' + images.size + (redraw ? 'r' : ''); return im; }, function(err){
+        return preparePdfImage(c, quality, bleed, redraw, signal).then(function(im){ im.alias = 'img' + images.size + (redraw ? 'r' : ''); return im; }, function(err){
+          if (err && err.name === 'AbortError') throw err;
           console.warn('PDF: couldn\'t read an image', c.id, err);
+          unread.set(c.id, { cause: (err && err.pdfCause) || 'broken', cards: 0 });
           return null;
         });
       };
-      let done = 0, missing = 0;
+      let done = 0;
       for (let si = 0; si < sheets.length; si++){
         const sheet = sheets[si];
         if (si > 0) doc.addPage(size, 'portrait');
@@ -4904,12 +5056,13 @@
           const c = sheet.cells[i];
           if (!c) continue;
           if (!images.has(c.id)){
-            if (onProgress) onProgress(++done, total);
+            if (options.onProgress) options.onProgress(++done, total);
             images.set(c.id, await prepare(c, false));
+            checkPdfCancelled(signal);
           }
           let im = images.get(c.id);
-          if (!im){ missing++; continue; }
-          const t = boxes[i].trim, b = boxes[i].bleed, d = computeFitDims(im.w, im.h, t.w, t.h, fit);
+          if (!im){ unread.get(c.id).cards++; continue; }
+          const t = boxes[i].trim, b = boxes[i].bleed, d = computeFitDims(im.w, im.h, t.w, t.h, snap.fit);
           const place = [(t.x + (t.w - d.w) / 2) * PT, (t.y + (t.h - d.h) / 2) * PT, d.w * PT, d.h * PT];
           if (bleed){ pdfFill(doc, c.color || im.color); doc.rect(b.x * PT, b.y * PT, b.w * PT, b.h * PT, 'F'); }
           doc.saveGraphicsState();
@@ -4924,64 +5077,143 @@
               im.data = null;
               break;
             }catch(err){
-              if (!im.data || attempt > 0){ console.warn('PDF: couldn\'t embed an image', c.id, err); images.set(c.id, null); im = null; missing++; break; }
-              im = await prepare(c, true);
-              images.set(c.id, im);
-              if (!im) missing++;
+              if (!im.data || attempt > 0){
+                console.warn('PDF: couldn\'t embed an image', c.id, err);
+                unread.set(c.id, { cause: 'broken', cards: 0 });
+                images.set(c.id, null);
+                im = null;
+              }else{
+                im = await prepare(c, true);
+                checkPdfCancelled(signal);
+                images.set(c.id, im);
+              }
+              if (!im) unread.get(c.id).cards++;
             }
           }
           doc.restoreGraphicsState();
         }
-        if (!sheet.back && toggleCutMarks && toggleCutMarks.checked){
-          pdfFill(doc, 'rgb(53,59,71)');   // the printed --cut-mark-color, rgba(17, 24, 39, 0.85), over white paper
+        if (!sheet.back && snap.cutMarks){
+          // As printed: --cut-mark-color, rgba(17, 24, 39, 0.85), blending with whatever is under it.
+          doc.saveGraphicsState();
+          doc.setGState(new doc.GState({ opacity: 0.85 }));
+          pdfFill(doc, 'rgb(17,24,39)');
           layout.cutMarks.forEach(function(m){
             const r = Math.min(m.w, m.h) / 2 * PT;   // round ends, like the printed marks' border-radius
             doc.roundedRect(m.x * PT, m.y * PT, m.w * PT, m.h * PT, r, r, 'F');
           });
+          doc.restoreGraphicsState();
         }
       }
-      return { blob: doc.output('blob'), sheets: sheets.length, missing: missing };
+      const blob = doc.output('blob');
+      checkPdfCancelled(signal);
+      const gaps = {};
+      let missingCards = 0;
+      unread.forEach(function(u){
+        const g = gaps[u.cause] || (gaps[u.cause] = { images: 0, cards: 0 });
+        g.images++; g.cards += u.cards; missingCards += u.cards;
+      });
+      return { blob: blob, sheets: sheets.length, missingImages: unread.size, missingCards: missingCards, gaps: gaps };
     }
     var NO_PDF_IMAGE_DATA = new Uint8Array(0);
 
-    // Builds the PDF in the chosen quality and downloads it, showing progress in the dialog and the
-    // status bar, and afterwards how many images (if any) couldn't be included.
-    async function exportPdf(){
-      const checked = exportModal && exportModal.querySelector('input[name="pdfQuality"]:checked');
-      const quality = checked && checked.value === 'png' ? 'png' : 'jpeg';
-      const progress = exportModal && exportModal.querySelector('#exportProgress');
-      const show = function(text){
-        if (progress){ progress.textContent = text; progress.hidden = !text; }
-        if (text) setStatus(text);
-      };
-      show('Preparing the PDF…');
+    function countOf(n, one, many){ return n + ' ' + (n === 1 ? one : many); }
+
+    // What a PDF left out, by cause, with what to do about it.
+    function describePdfGaps(result){
+      const g = result.gaps, parts = [];
+      if (g.remote) parts.push(countOf(g.remote.images, 'image', 'images') + ' couldn\'t be read (offline, or added from a website that blocks copying), so ' +
+        countOf(g.remote.cards, 'card', 'cards') + ' would be blank. Download and upload ' + (g.remote.images === 1 ? 'that image' : 'those images') + ', or try again online.');
+      if (g.stored) parts.push(countOf(g.stored.images, 'uploaded image is', 'uploaded images are') + ' no longer stored in this browser, so ' +
+        countOf(g.stored.cards, 'card', 'cards') + ' would be blank. Upload ' + (g.stored.images === 1 ? 'it' : 'them') + ' again.');
+      if (g.broken) parts.push(countOf(g.broken.images, 'image', 'images') + ' couldn\'t be decoded, so ' + countOf(g.broken.cards, 'card', 'cards') +
+        ' would be blank. Replace ' + (g.broken.images === 1 ? 'it' : 'them') + ' with a PNG or JPEG copy.');
+      if (g.fileBack) parts.push(PDF_FILE_BACK_NOTE + ' Without it, ' + countOf(g.fileBack.cards, 'card back', 'card backs') + ' would be blank.');
+      return parts.join(' ');
+    }
+
+    // Downloads a built PDF and says so in the status bar.
+    function savePdf(result){
+      const url = URL.createObjectURL(result.blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'deck-layout-' + new Date().toISOString().slice(0,10) + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+      setStatus('Saved the PDF (' + countOf(result.sheets, 'page', 'pages') + ')' +
+        (result.missingCards ? ' — ' + countOf(result.missingCards, 'card', 'cards') + ' left blank' : '') + '. Print it at Actual size (100%).');
+    }
+
+    var pdfBuildController = null;   // cancels the PDF being built from the dialog
+    var pendingPdf = null;           // a built PDF with images left out, waiting on "Save anyway"
+
+    function clearPendingPdf(){
+      pendingPdf = null;
+      const el = exportModal && exportModal.querySelector('#pdfIncomplete');
+      if (el) el.hidden = true;
+    }
+
+    // Builds the PDF from the dialog. The start and the outcome are announced; the image count beside
+    // it isn't (it would be read out for every image). A complete PDF downloads and the dialog closes. With
+    // images left out it waits, built once, for "Save anyway" or "Cancel" (resolves 'incomplete').
+    // Closing the dialog cancels it (rejects with an AbortError).
+    async function exportPdfFromDialog(session){
+      const m = exportModal;
+      const quality = (m.querySelector('input[name="pdfQuality"]:checked') || {}).value === 'png' ? 'png' : 'jpeg';
+      const live = m.querySelector('#exportLive'), count = m.querySelector('#exportCount');
+      const ctl = new AbortController();
+      pdfBuildController = ctl;
+      live.textContent = 'Building PDF…';
       try{
-        const result = await buildPdf(quality, function(n, total){ show('Building PDF: ' + n + '/' + total + ' images…'); });
-        const url = URL.createObjectURL(result.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'deck-layout-' + new Date().toISOString().slice(0,10) + '.pdf';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
-        setStatus('Saved the PDF (' + result.sheets + ' page' + (result.sheets === 1 ? '' : 's') + ')' +
-          (result.missing ? ' — ' + result.missing + ' image(s) couldn\'t be included' : '') + '. Print it at Actual size (100%).');
-        return result;
+        const result = await buildPdf(quality, { signal: ctl.signal, onProgress: function(n, total){ count.textContent = n + '/' + total + ' images'; count.hidden = false; } });
+        if (ctl.signal.aborted || session !== exportSession) throw pdfCancelled();
+        if (result.missingImages){
+          pendingPdf = { result: result };
+          m.querySelector('#pdfIncompleteText').textContent = describePdfGaps(result) + ' "Save anyway" saves the PDF with those cards blank.';
+          m.querySelector('#pdfIncomplete').hidden = false;
+          return 'incomplete';
+        }
+        savePdf(result);
+        closeModal(m);
+        return 'saved';
       }finally{
-        show('');
+        if (pdfBuildController === ctl) pdfBuildController = null;
+        live.textContent = '';
+        count.textContent = '';
+        count.hidden = true;
       }
     }
 
-    // The size estimate in the dialog. Each run has a token; only the latest run may show its result,
-    // so changing the choice while one is running can't leave an older estimate on screen.
+    // The size estimate in the dialog. Each image's size is read once (cached by image), so changing the
+    // quality only recomputes. Each run has a token: only the latest may show its result, and closing the
+    // dialog or leaving PDF stops it (its downloads too).
     var pdfEstimateToken = 0;
+    var pdfEstimateController = null;
+    var pdfEstimate = null;               // the latest run's { infos, unreadable, fileBack } (or { failed }), null while running
     var pdfSourceInfoCache = new Map();   // image id -> { bytes, kind }; what an id names doesn't change
 
-    async function pdfSourceInfo(c){
+    function cancelPdfEstimate(){
+      pdfEstimateToken++;
+      if (pdfEstimateController) pdfEstimateController.abort();
+      pdfEstimateController = null;
+    }
+
+    // An image's size and kind. A download's come from its Content-Length and Content-Type when the
+    // server sends them, without reading the image itself.
+    async function pdfSourceInfo(c, signal){
       if (pdfSourceInfoCache.has(c.id)) return pdfSourceInfoCache.get(c.id);
-      const blob = await readPdfSource(c);
-      const info = { bytes: blob.size, kind: imageKind(new Uint8Array(await blob.slice(0, 4).arrayBuffer())) };
+      const fromBlob = async function(blob){ return { bytes: blob.size, kind: imageKind(new Uint8Array(await blob.slice(0, 4).arrayBuffer())) }; };
+      const info = c.key ? await fromBlob(await readPdfSource(c, signal)) : await withReadTimeout(signal, async function(s){
+        const r = await fetch(c.url, { signal: s });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const length = +r.headers.get('content-length'), type = (r.headers.get('content-type') || '').toLowerCase();
+        if (length > 0 && /^image\//.test(type)){
+          if (r.body) r.body.cancel().catch(function(){});
+          return { bytes: length, kind: /jpe?g/.test(type) ? 'jpeg' : /png/.test(type) ? 'png' : 'other' };
+        }
+        return fromBlob(await r.blob());
+      });
       pdfSourceInfoCache.set(c.id, info);
       return info;
     }
@@ -4997,33 +5229,50 @@
       }, 0);
     }
 
-    async function updatePdfEstimate(){
-      const el = exportModal && exportModal.querySelector('#pdfEstimate');
-      if (!el) return;
-      const token = ++pdfEstimateToken;
-      const quality = (exportModal.querySelector('input[name="pdfQuality"]:checked') || {}).value === 'png' ? 'png' : 'jpeg';
-      el.textContent = 'Estimating size…';
-      delete el.dataset.bytes;
-      let text, bytes = null;
+    // Reads the images the PDF would contain (sizes only) and shows the estimate.
+    async function refreshPdfEstimate(){
+      if (!exportModal) return;
+      cancelPdfEstimate();
+      const token = pdfEstimateToken, ctl = new AbortController();
+      pdfEstimateController = ctl;
+      pdfEstimate = null;
+      renderPdfEstimate();
+      let result = { failed: true };
       try{
+        const sheets = await pdfSheets(pdfSnapshot(computeLayout()));
         const sources = new Map();
-        (await pdfSheets()).forEach(function(s){ s.cells.forEach(function(c){ if (c && !sources.has(c.id)) sources.set(c.id, c); }); });
+        sheets.forEach(function(s){ s.cells.forEach(function(c){ if (c && !sources.has(c.id)) sources.set(c.id, c); }); });
         const infos = [];
-        let unreadable = 0;
+        let unreadable = 0, fileBack = false;
         for (const c of sources.values()){
           if (token !== pdfEstimateToken) return;
-          try{ infos.push(await pdfSourceInfo(c)); }catch(_){ unreadable++; }
+          if (c.fileBack){ fileBack = true; unreadable++; continue; }
+          try{ infos.push(await pdfSourceInfo(c, ctl.signal)); }catch(_){ unreadable++; }
         }
-        bytes = estimatePdfBytes(infos, quality);
-        text = (bytes < 1024 * 1024 ? 'Estimated size: under 1 MB' : 'Estimated size: about ' + Math.round(bytes / (1024 * 1024)) + ' MB') +
-          (unreadable ? ' (' + unreadable + ' image(s) can\'t be read and would be left out)' : '');
+        result = { infos: infos, unreadable: unreadable, fileBack: fileBack };
       }catch(err){
         console.warn('PDF size estimate failed', err);
-        text = 'Couldn\'t estimate the size.';
       }
       if (token !== pdfEstimateToken) return;
-      el.textContent = text;
-      if (bytes !== null) el.dataset.bytes = String(Math.round(bytes));
+      pdfEstimateController = null;
+      pdfEstimate = result;
+      renderPdfEstimate();
+    }
+
+    // Shows the latest estimate for the chosen quality, and, opened as a file, why the default card back
+    // would be missing (before anything is built).
+    function renderPdfEstimate(){
+      const el = exportModal && exportModal.querySelector('#pdfEstimate'), note = exportModal && exportModal.querySelector('#pdfNote');
+      if (!el) return;
+      const e = pdfEstimate;
+      note.textContent = PDF_FILE_BACK_NOTE;
+      note.hidden = !(e && e.fileBack);
+      if (!e){ el.textContent = 'Estimating size…'; return; }
+      if (e.failed){ el.textContent = 'Couldn\'t estimate the size.'; return; }
+      const quality = (exportModal.querySelector('input[name="pdfQuality"]:checked') || {}).value === 'png' ? 'png' : 'jpeg';
+      const bytes = estimatePdfBytes(e.infos, quality);
+      el.textContent = (bytes < 1024 * 1024 ? 'Estimated size: under 1 MB' : 'Estimated size: about ' + Math.round(bytes / (1024 * 1024)) + ' MB') +
+        (e.unreadable ? ' (' + countOf(e.unreadable, 'image', 'images') + ' can\'t be read and would be left out)' : '');
     }
 
     async function performImport(file){

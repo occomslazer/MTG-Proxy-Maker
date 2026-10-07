@@ -238,7 +238,9 @@ tooltip.
   each distinct image is embedded (below): JPEG files at their size; PNGs at their size (Original
   PNG) or a quarter of it (JPEG); other formats at their size (JPEG) or four times it (Original
   PNG). Shown rounded as "about N MB" (or "under 1 MB"), with a note when images can't be read. It
-  is worked out lazily, and only the latest run may show its result.
+  is worked out lazily: each image's size is read once (from Content-Length and Content-Type when the
+  server sends them), a quality change only recomputes, only the latest run may show its result, and
+  closing the dialog stops it.
 - Library: jsPDF (MIT), the latest stable release at implementation time, vendored as
   `vendor/jspdf.umd.min.js` with its licence and a `vendor/README.md` recording the exact version
   and source URL; loaded on first PDF export, precached by the service worker.
@@ -248,21 +250,36 @@ tooltip.
   The clip is rounded like the printed card (8 CSS px = 8/96″) without bleed and square with bleed.
   Bleed boxes are filled rectangles in the colour the page shows for that card (its sampled border
   colour). Cut marks (fronts only, when the Cut marks switch is on) are the calculator's rectangles
-  with fully rounded ends, like the printed marks, in the printed colour: rgba(17,24,39,.85) over
-  white = rgb(53,59,71).
+  with fully rounded ends, like the printed marks, in the printed colour rgb(17,24,39) at opacity
+  0.85 (a PDF graphics state), so they blend with bleed and cards exactly as printed (over white:
+  rgb(53,59,71)).
+- Settings are read once when the build starts (layout, fit mode, cut marks on/off, double-sided,
+  DFC backs), so a change while it builds can't mix pages. A layout that doesn't fit stops it before
+  anything loads.
 - Image data: Scryfall images via fetch (served from the offline cache when present); uploads and
   an uploaded back image from the image store. JPEG files go in as they are in both modes (no
   re-encoding, no loss) when a PDF shows them as the browser does (8-bit grey or RGB, baseline or
-  progressive, no EXIF rotation); others are redrawn. JPEG mode draws other images at source
+  progressive, no EXIF rotation, no ICC profile other than sRGB by its description); others are
+  redrawn, which converts them to sRGB as the browser shows them. JPEG mode draws other images at source
   resolution over what shows through their transparent corners on the printed page (the bleed
   colour with bleed, white paper without) and encodes them at quality 0.92. PNG mode embeds the
   original PNG bytes (8-bit RGB/RGBA, not interlaced, no colour profile, gamma or transparent
   colour) and redraws anything else losslessly as PNG. Each distinct image (storage key or URL) is
   embedded once and reused; images are decoded one at a time and released straight after.
-- Progress in the dialog and the status bar ("Building PDF: 12/40 images…"); the Export button is
-  disabled while building. An image that can't be read leaves its cell empty; the status bar then
-  reports how many ("N image(s) couldn't be included"). If the library can't load, the dialog says
-  so and stays usable.
+- Progress in the dialog: "Building PDF…" is announced once, with an image count beside it that
+  isn't announced; the outcome is announced. The Export button is disabled while building (and a
+  second start does nothing) with focus on Close, which reads Cancel: closing the dialog cancels the
+  build ("PDF export cancelled") and nothing downloads. After an error, focus returns to Export.
+- Each image read gives up after 30 s. An image that can't be read leaves its cards blank; the PDF is
+  then not saved straight away: the dialog says, by cause, how many images and cards are affected and
+  what to do (offline or a site that blocks copying: download and upload them, or try again online;
+  uploads no longer stored: upload again), with "Save anyway" (saves the PDF already built) and
+  "Cancel".
+- Opened as a file (file://), the default card back can't be read: when a back sheet needs it, the
+  dialog says so before building ("Upload a card back in Print settings, or open the app from a web
+  server or the hosted site") and the incomplete-PDF flow follows. If the library can't load, the
+  error names the likely cause (file://: vendor/jspdf.umd.min.js not next to the app; offline: not
+  cached yet; online: the connection) and the dialog stays usable.
 - File name `deck-layout-YYYY-MM-DD.pdf`.
 
 ---
