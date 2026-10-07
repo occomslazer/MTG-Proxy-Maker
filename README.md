@@ -8,7 +8,7 @@ A single-file HTML app that pulls card images from [Scryfall](https://scryfall.c
 - **Decklist import** — paste a full decklist (e.g. `4 Lightning Bolt`, or an Arena/Moxfield export like `1 Sol Ring (CMR) 472` for exact printings) to auto-fill pages
 - **Double-faced cards** — automatically add missing DFC back faces
 - **Drag & drop** — rearrange cards between cells, or drop image files directly onto the grid
-- **Multiple pages** — add as many pages as you need; all pages print at once
+- **Multiple pages** — add as many pages as you need; all pages print at once. New cards fill the first empty cell, and **Remove gaps** closes up empty cells left by deleting cards
 - **Print-ready layout** — 8.5″ × 11″ pages with precise card sizing and optional cut marks
 - **Printer calibration** — fine-tune margins, card dimensions, and image fit mode (cover/contain)
 - **Dark mode** — toggle between light and dark themes
