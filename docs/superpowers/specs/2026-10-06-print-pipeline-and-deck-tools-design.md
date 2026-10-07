@@ -340,7 +340,8 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
 ### 6.1 Art picker
 
 - Opened by ⇄ on a panel row, or **Change printing…** in a card's right-click menu — the same
-  window for that card name either way, with the first copy selected.
+  window for that card name either way. From ⇄ the first copy is selected; from **Change printing…**
+  the copy you right-clicked is selected.
 - Top: a strip of every copy of the card (current art, page). Below: every printing, newest first,
   from Scryfall `cards/search` with `q=!"<name>"`, `unique=prints`, `order=released`, `dir=desc`
   (`include_extras=true` for tokens), 175 per page with **Load more**, through the rate-limit queue.

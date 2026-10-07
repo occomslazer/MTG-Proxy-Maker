@@ -505,6 +505,9 @@
     :root[data-theme="dark"] .art-copy img, :root[data-theme="dark"] .art-print img { background: #1f2937; }
     :root[data-theme="dark"] .art-copy[aria-selected="true"] { background: #1e3a8a; }
     :root[data-theme="dark"] .art-print .art-meta { color: #9ca3af; }
+    @media (forced-colors: active){
+      .art-copy[aria-selected="true"], .art-print.current { border-color: Highlight; }
+    }
 
     :root[data-theme="dark"] body { background:#0b0d10; color:#e5e7eb; }
     :root[data-theme="dark"] header { background:#111827; border-bottom-color:#1f2937; }
@@ -1331,7 +1334,8 @@
         }
         return false;
       };
-      const all=[...m.querySelectorAll(sel)].filter(el=>!el.disabled && el.offsetParent!==null && isToggle(el) && !inClosedDetails(el));
+      // tabindex="-1" takes a control out of the Tab order (a list's roving options), buttons included.
+      const all=[...m.querySelectorAll(sel)].filter(el=>!el.disabled && el.getAttribute('tabindex')!=='-1' && el.offsetParent!==null && isToggle(el) && !inClosedDetails(el));
       const groups=new Set();
       return all.filter(function(el){
         if(el.type!=='radio' || !el.name) return true;
@@ -4892,7 +4896,7 @@
       artModal.querySelector('#artAllBtn').addEventListener('click', function(){
         if (!artState || !artState.picked) return;
         artState.copies.forEach(function(c){ c.assigned = artState.picked; });
-        renderArtCopies(); renderArtPrintings();
+        refreshArtCopies(); refreshArtGrid();
       });
       artModal.querySelector('#artMoreBtn').addEventListener('click', function(){ loadArtPrintings(artState && artState.next); });
       artModal.querySelector('.art-grid').addEventListener('keydown', onArtListKey);
@@ -4935,7 +4939,7 @@
       more.hidden = true; more.disabled = false;
       modal.querySelector('#artAllBtn').disabled = true;
       modal.querySelector('#artStatus').textContent = '';
-      renderArtCopies();
+      buildArtCopies();
       openModal(modal);
       const selectedCopy = modal.querySelectorAll('.art-copy')[artState.selected];
       if (selectedCopy) selectedCopy.focus();
@@ -4984,89 +4988,133 @@
         if (artState === state){
           btn.disabled = false;
           if (hadFocus){
-            const target = grid.children[before] || (btn.hidden ? artModal.querySelector('#artDoneBtn') : btn);
-            target.focus();
+            if (grid.children[before]) artRove(grid, grid.children[before]);
+            else (btn.hidden ? artModal.querySelector('#artDoneBtn') : btn).focus();
           }
         }
       }
     }
 
+    // New printings are appended; what is already in the grid stays (and keeps focus).
     function addArtPrintings(page){
-      artState.printings = artState.printings.concat(page.data || []);
+      const cards = page.data || [];
+      artState.printings = artState.printings.concat(cards);
       artState.next = page.has_more ? page.next_page : null;
       artModal.querySelector('#artMoreBtn').hidden = !artState.next;
       artModal.querySelector('#artStatus').textContent = countOf(artState.printings.length, 'printing', 'printings');
-      renderArtPrintings();
+      const grid = artModal.querySelector('.art-grid');
+      cards.forEach(function(card){ grid.appendChild(artPrintButton(card)); });
+      refreshArtGrid(true);
     }
 
     function effectiveArtId(copy){ return copy.assigned ? String(copy.assigned.id).toLowerCase() : scryfallIdOf(copy.item); }
 
-    function renderArtCopies(){
+    // A Scryfall card image as its `small` thumbnail (same card, same ?timestamp); other URLs unchanged.
+    function scryfallSmallImage(url){
+      if (!scryfallIdOf({ type: 'url', url: url })) return url;
+      return url.replace(/^(https:\/\/cards\.scryfall\.io\/)[a-z_]+\//i, '$1small/').replace(/\.(png|jpe?g)(\?|$)/i, '.jpg$2');
+    }
+
+    // Each list is one Tab stop (a roving tabindex): `el` gets it, and focus.
+    function artRove(list, el){
+      Array.prototype.forEach.call(list.children, function(c){ c.tabIndex = c === el ? 0 : -1; });
+      el.focus();
+    }
+
+    function buildArtCopies(){
       const strip = artModal.querySelector('.art-copies');
       strip.innerHTML = '';
       artState.copies.forEach(function(c, i){
         const b = document.createElement('button');
         b.type = 'button'; b.className = 'art-copy';
         b.setAttribute('role', 'option');
-        b.setAttribute('aria-selected', i === artState.selected ? 'true' : 'false');
         const img = document.createElement('img');
-        img.alt = '';
-        img.src = c.assigned ? cardSmallImage(c.assigned) : c.item.url;
+        img.alt = ''; img.loading = 'lazy';
+        b.append(img, document.createElement('span'));
+        b.addEventListener('click', function(){
+          artState.selected = i;
+          refreshArtCopies(); refreshArtGrid();
+          b.focus();
+        });
+        strip.appendChild(b);
+      });
+      refreshArtCopies();
+    }
+
+    // Thumbnail, caption and selection of every copy; the selected copy is the strip's Tab stop.
+    function refreshArtCopies(){
+      const strip = artModal.querySelector('.art-copies');
+      artState.copies.forEach(function(c, i){
+        const b = strip.children[i];
+        const selected = i === artState.selected;
+        b.setAttribute('aria-selected', selected ? 'true' : 'false');
+        b.tabIndex = selected ? 0 : -1;
+        const src = c.assigned ? cardSmallImage(c.assigned) : scryfallSmallImage(c.item.url);
+        const img = b.querySelector('img');
+        if (img.getAttribute('src') !== src) img.src = src;
         const p = positionOfItem(c.item);
-        const cap = document.createElement('span');
         const parts = ['Copy ' + (i + 1)];
         if (p >= 0) parts.push('page ' + (posToSlot(p).page + 1));
         if (c.assigned) parts.push('changed');
-        cap.textContent = parts.join(' · ');
+        b.querySelector('span').textContent = parts.join(' · ');
         // The caption is the option's name, given explicitly (the thumbnail has no text of its own).
         b.setAttribute('aria-label', parts.join(', '));
-        b.append(img, cap);
-        b.addEventListener('click', function(){ artState.selected = i; renderArtCopies(); renderArtPrintings(); strip.children[i].focus(); });
-        strip.appendChild(b);
       });
     }
 
-    function renderArtPrintings(){
-      const grid = artModal.querySelector('.art-grid');
-      const focusedIndex = Array.prototype.indexOf.call(grid.children, document.activeElement);
-      grid.innerHTML = '';
-      const current = effectiveArtId(artState.copies[artState.selected]);
-      artState.printings.forEach(function(card){
-        const isCurrent = String(card.id).toLowerCase() === current;
-        const b = document.createElement('button');
-        b.type = 'button'; b.className = 'art-print' + (isCurrent ? ' current' : '');
-        b.setAttribute('role', 'option');
-        b.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
-        const img = document.createElement('img');
-        img.alt = ''; img.loading = 'lazy'; img.src = cardSmallImage(card);
-        const dfc = isDoubleFacedPrinting(card);
-        const set = document.createElement('span'); set.className = 'art-set';
-        if (dfc){
-          const mark = document.createElement('span');
-          mark.setAttribute('aria-hidden', 'true');
-          mark.textContent = '◐ ';
-          set.appendChild(mark);
-        }
-        set.appendChild(document.createTextNode(card.set_name || card.set || ''));
-        const year = card.released_at ? String(card.released_at).slice(0, 4) : '';
-        const code = String(card.set || '').toUpperCase();
-        const meta = document.createElement('span'); meta.className = 'art-meta';
-        meta.textContent = code + ' #' + card.collector_number + (year ? ' · ' + year : '');
-        b.append(img, set, meta);
-        b.setAttribute('aria-label', (card.set_name || code) + ', ' + code + ' number ' + card.collector_number + (year ? ', ' + year : '') + (dfc ? ', double-faced' : ''));
-        b.addEventListener('click', function(){
-          artState.picked = card;
-          artState.copies[artState.selected].assigned = card;
-          artModal.querySelector('#artAllBtn').disabled = false;
-          renderArtCopies(); renderArtPrintings();
-        });
-        grid.appendChild(b);
+    function artPrintButton(card){
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'art-print';
+      b.setAttribute('role', 'option');
+      b.tabIndex = -1;
+      b.dataset.id = String(card.id).toLowerCase();
+      const img = document.createElement('img');
+      img.alt = ''; img.loading = 'lazy'; img.src = cardSmallImage(card);
+      const dfc = isDoubleFacedPrinting(card);
+      const set = document.createElement('span'); set.className = 'art-set';
+      if (dfc){
+        const mark = document.createElement('span');
+        mark.setAttribute('aria-hidden', 'true');
+        mark.textContent = '◐ ';
+        set.appendChild(mark);
+      }
+      set.appendChild(document.createTextNode(card.set_name || card.set || ''));
+      const year = card.released_at ? String(card.released_at).slice(0, 4) : '';
+      const code = String(card.set || '').toUpperCase();
+      const meta = document.createElement('span'); meta.className = 'art-meta';
+      meta.textContent = code + ' #' + card.collector_number + (year ? ' · ' + year : '');
+      b.append(img, set, meta);
+      b.setAttribute('aria-label', (card.set_name || code) + ', ' + code + ' number ' + card.collector_number + (year ? ', ' + year : '') + (dfc ? ', double-faced' : ''));
+      b.addEventListener('click', function(){
+        artState.picked = card;
+        artState.copies[artState.selected].assigned = card;
+        artModal.querySelector('#artAllBtn').disabled = false;
+        refreshArtCopies(); refreshArtGrid();
       });
-      if (focusedIndex >= 0 && grid.children[focusedIndex]) grid.children[focusedIndex].focus();
+      return b;
+    }
+
+    // Outlines the selected copy's printing. The grid's Tab stop moves to it (else the first printing);
+    // with `keepStop` (printings appended) a stop already in place stays where it is.
+    function refreshArtGrid(keepStop){
+      const grid = artModal.querySelector('.art-grid');
+      const items = Array.from(grid.children);
+      const current = effectiveArtId(artState.copies[artState.selected]);
+      let stop = null;
+      items.forEach(function(b){
+        const isCurrent = b.dataset.id === current;
+        b.classList.toggle('current', isCurrent);
+        b.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+        if (isCurrent && !stop) stop = b;
+      });
+      if (keepStop && items.some(function(b){ return b.tabIndex === 0; })) return;
+      stop = stop || items[0];
+      items.forEach(function(b){ b.tabIndex = b === stop ? 0 : -1; });
     }
 
     // Arrow keys move through the copies (Left/Right) and the printings (Up/Down by a row too);
-    // Home/End go to the first/last. Enter and Space press the focused button natively.
+    // Home/End go to the first/last; the list's Tab stop moves with the focus. Enter and Space press
+    // the focused button natively.
     function onArtListKey(e){
       const list = e.currentTarget;
       const items = Array.from(list.children);
@@ -5083,7 +5131,7 @@
       const step = steps[e.key];
       if (!step) return;
       e.preventDefault();
-      items[Math.min(items.length - 1, Math.max(0, i + step))].focus();
+      artRove(list, items[Math.min(items.length - 1, Math.max(0, i + step))]);
     }
 
     function positionOfItem(item){
@@ -5109,7 +5157,7 @@
       });
       if (changed){ clearInternalClipboard(); saveState(); }
       closeModal(artModal);
-      setStatus('Changed art for ' + changed + ' of ' + state.copies.length + ' ' + state.name);
+      setStatus(changed ? 'Changed art for ' + changed + ' of ' + state.copies.length + ' ' + state.name : 'No art changed');
     }
 
     /* ===== Export / Import ===== */
