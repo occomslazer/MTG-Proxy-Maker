@@ -307,8 +307,11 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
 
 - Card items gain optional saved fields: `set`, `collectorNumber` (Scryfall cards) and `copyOf`
   (uploaded images). Older saves and exports load unchanged; older app versions ignore the fields.
-- Print settings extend the saved tuning and are exported/imported with it; an uploaded back image
-  is embedded in Full exports and restored on import.
+- Print settings extend the saved tuning and are exported with it; an uploaded back image is
+  embedded in Full exports. On import, if the file's print settings differ from the current ones
+  (paper, gap, bleed, cut style, double-sided, back image, printer tuning), the app asks
+  "Keep mine" / "Use the file's" (decided with the user: printer calibration is device-specific).
+  Identical settings import silently. An imported back image that isn't used is discarded.
 
 ## 7.2 Offline
 

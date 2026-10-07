@@ -1577,6 +1577,20 @@ Expected: status 200, bytes ≤ 307200, `1035x1449`, `cached: true`, `oldCacheGo
       await resetBackImage(); await syncBackPages();
       ok('reset to default', printSettings.backImageKey === null && /card-back\.jpg$/.test(pages[0].backEl.querySelector('.back-cell img').src), '');
     });
+    await run('import asks before changing print settings', async () => {
+      savePrintSettings({ paper: 'letter', gapMm: 0 });
+      const file = (tuning) => new File([JSON.stringify({ version: 1, mode: 'light', pages: [[null]], current: 0, tuning })], 'x.mtgproxy');
+      let p = performImport(file(Object.assign({}, readSavedTuning(), { paper: 'a4', gapMm: 2 })));
+      ok('asked', await waitFor(() => document.getElementById('choiceModal').classList.contains('open') && /different print settings/.test(document.getElementById('choiceModal').textContent)), document.getElementById('choiceModal').textContent);
+      clickChoice('Keep mine'); await p;
+      ok('kept mine', printSettings.paper === 'letter' && printSettings.gapMm === 0, JSON.stringify(printSettings));
+      p = performImport(file(Object.assign({}, readSavedTuning(), { paper: 'a4', gapMm: 2 })));
+      await waitFor(() => document.getElementById('choiceModal').classList.contains('open'));
+      clickChoice("Use the file's"); await p;
+      ok("used the file's", printSettings.paper === 'a4' && printSettings.gapMm === 2, JSON.stringify(printSettings));
+      await performImport(file(Object.assign({}, readSavedTuning())));
+      ok('same settings: no question', !document.getElementById('choiceModal').classList.contains('open'), '');
+    });
   } finally {
     keep === null ? localStorage.removeItem('mtgTuning') : localStorage.setItem('mtgTuning', keep);
     loadTuning(); applyLayout(); window.confirm = () => true; clearAllPages(true); await syncBackPages();
@@ -1875,9 +1889,27 @@ and add a choice dialog right after the closing `</div>` of `#tuneModal`:
         } catch(err){ console.warn('Failed to export the card back image', err); }
       }
     ```
-  - Import (`performImport`): in the loop that stores `data.images`, right after `remapImageKey(data.pages, key, stored.key);` add `if (data.tuning && data.tuning.backImageKey === key) data.tuning.backImageKey = stored.key;`. After `loadTuning();` in the "Restore tuning" block add `syncBackPages();`.
+  - Import (`performImport`): in the loop that stores `data.images`, right after `remapImageKey(data.pages, key, stored.key);` add `if (data.tuning && data.tuning.backImageKey === key) data.tuning.backImageKey = stored.key;`. Then replace the whole "Restore tuning if present" block (`if (data.tuning){ try { localStorage.setItem('mtgTuning', JSON.stringify(data.tuning)); loadTuning(); } catch(_){} }`) with:
+    ```js
+      // Print settings are printer-specific: apply the file's only if they match ours or the user agrees.
+      if (data.tuning && typeof data.tuning === 'object'){
+        const mine = readSavedTuning() || {};
+        const keys = ['paper','gapMm','bleedMm','cutStyle','duplex','dfcOnBack','backOffsetXIn','backOffsetYIn','topIn','leftIn','cardWIn','cardHIn','fitMode','scaleLock'];
+        const theirsBack = data.tuning.backImageKey || null;
+        const differs = keys.some(function(k){ return typeof data.tuning[k] !== 'undefined' && JSON.stringify(data.tuning[k]) !== JSON.stringify(mine[k]); })
+          || (theirsBack !== (mine.backImageKey || null));
+        const use = !differs || await askChoice('This file has different print settings (paper, gaps, bleed, printer offsets or card back). Use them?',
+          [{ label: 'Keep mine', value: false }, { label: "Use the file's", value: true }]);
+        if (use){
+          try { localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, mine, data.tuning))); loadTuning(); } catch(_){}
+        } else if (theirsBack && theirsBack !== mine.backImageKey){
+          Promise.resolve(imageStore.delete(theirsBack)).catch(function(){});
+        }
+        syncBackPages();
+      }
+    ```
 
-- [ ] **Step 7: Run `tests-duplex.js` — expect all PASS (19).** Run the regression suites, `tests-render.js`, `tests-bleed.js`, `tests-advanced.js`, `tests-ripple.js`.
+- [ ] **Step 7: Run `tests-duplex.js` — expect all PASS (23).** Run the regression suites, `tests-render.js`, `tests-bleed.js`, `tests-advanced.js`, `tests-ripple.js`.
 
 - [ ] **Step 8: Real-print gate + duplex geometry.** Baseline comparison must PASS (duplex off by default). Then:
 
