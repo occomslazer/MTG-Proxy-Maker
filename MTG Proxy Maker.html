@@ -607,9 +607,9 @@
           </div>
           <div class="tune-row"><span id="backImageLabel">Card back</span>
             <div class="back-image-controls">
-              <img id="backImageThumb" alt="Card back in use" />
+              <img id="backImageThumb" alt="Default card back" />
               <button id="backImageUpload" class="secondary" aria-label="Upload a card back image">Upload…</button>
-              <button id="backImageReset" class="secondary" aria-label="Reset the card back to the default">Reset</button>
+              <button id="backImageDefault" class="secondary" aria-label="Use the default card back">Use default</button>
               <input id="backImageInput" type="file" accept="image/*" hidden />
             </div>
           </div>
@@ -4324,104 +4324,46 @@
       return failed ? failed + ' card(s) couldn\'t be checked for a back face (offline?) and will print the card back' : '';
     }
 
-    /* Print settings dialog: the card back is a draft like everything else there. An upload is stored
-       straight away so it can be shown (tunePendingBackKey) and is deleted unless the dialog saves it.
-       Pending uploads are also listed in localStorage (shared by every tab), so one left behind when a
-       tab closes or reloads with the dialog open is deleted the next time the app starts. Before
-       deleting, open tabs are asked whether an upload is still their draft, so another tab's draft is
-       never touched. */
-    let tuneBackKey = null;          // the card back chosen in the dialog; null = the default
-    let tuneBackChanged = false;     // whether the dialog changed the card back (Upload or Reset)
-    let tunePendingBackKey = null;   // an upload that is stored but not saved
+    /* Print settings dialog: the card back is a draft like everything else there. An upload stays in
+       memory (its bytes, shown through an object URL of their own) and is stored only when Save keeps
+       it, so closing the dialog, or a Save that doesn't go through, leaves nothing in the image store. */
+    let tuneSavedBack = null;        // the card back saved when the dialog opened; null = the default
+    let tuneBackDraft = null;        // the dialog's choice: null keeps the saved back; 'default'; or an upload { blob, url }
     let tuneSession = 0;             // bumped when the dialog closes, so late work from it is dropped
     let backUploadToken = 0;         // the latest upload chosen; an earlier one finishing later is dropped
-    const PENDING_BACKS = 'mtgPendingBackKeys';      // JSON list of pending uploads, every tab's
-    const OLD_PENDING_BACK = 'mtgPendingBackKey';    // single records kept by earlier versions
-    const backDraftChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('mtg-proxy-back-draft') : null;
-    // Another tab asks before deleting an upload: claim every card back this tab is using (its pending
-    // upload, the open dialog's choice, the saved back it prints with), so nothing in use is deleted
-    // even if the shared list is out of date. Nothing here deletes a key this says is in use.
-    function backKeyInUse(key){
-      return !!key && (key === tunePendingBackKey || key === printSettings.backImageKey ||
-        (key === tuneBackKey && tuneModal.classList.contains('open')));
-    }
-    if (backDraftChannel){
-      backDraftChannel.addEventListener('message', function(e){
-        const m = e.data || {};
-        if (m.type === 'claimed?' && backKeyInUse(m.key)) backDraftChannel.postMessage({ type: 'claimed', key: m.key });
-      });
-    }
+    let backThumbToken = 0;          // the latest thumbnail asked for
 
-    function pendingBackList(){
-      try{
-        const v = JSON.parse(localStorage.getItem(PENDING_BACKS) || '[]');
-        return Array.isArray(v) ? v.filter(function(k){ return typeof k === 'string' && k; }) : [];
-      }catch(_){ return []; }
-    }
-    // Adds and removes keys on the list as it is now (another tab may have changed it meanwhile).
-    function updatePendingBackList(add, remove){
-      try{
-        const list = pendingBackList().filter(function(k){ return remove.indexOf(k) === -1; });
-        add.forEach(function(k){ if (list.indexOf(k) === -1) list.push(k); });
-        if (list.length) localStorage.setItem(PENDING_BACKS, JSON.stringify(list));
-        else localStorage.removeItem(PENDING_BACKS);
-      }catch(_){}
-    }
     // The card back saved by any tab, read fresh: another tab may have just saved one.
     function savedBackKey(){ const t = readSavedTuning(); return (t && typeof t.backImageKey === 'string' && t.backImageKey) || null; }
 
-    function setPendingBack(key){
-      const old = tunePendingBackKey;
-      tunePendingBackKey = key;
-      updatePendingBackList(key ? [key] : [], old && old !== key ? [old] : []);
-    }
+    // A stored card back that must never be deleted: the one saved now (another tab may have saved it
+    // since this tab loaded its settings) or the one this tab prints with.
+    function backKeyInUse(key){ return !!key && (key === savedBackKey() || key === printSettings.backImageKey); }
 
-    function discardPendingBack(){
-      const key = tunePendingBackKey;
-      setPendingBack(null);
-      return key ? Promise.resolve(imageStore.delete(key)).catch(function(){}) : Promise.resolve();
-    }
-
-    // At start-up: uploads on the list that no open tab claims as its draft (their tab closed or
-    // reloaded with the dialog open) are deleted, after a second's wait for the answers; the start-up
-    // doesn't wait for it. The saved card back is never deleted. Records an earlier version kept (one
-    // key, in localStorage or this tab's sessionStorage) go through the same check. Without a way to
-    // ask the other tabs nothing is deleted: a leftover file is better than deleting one in use.
-    // `channel` defaults to the tabs' channel; null means there's no way to ask.
-    function discardLeftoverPendingBack(channel){
-      if (channel === undefined) channel = backDraftChannel;
-      const old = [];
-      try{ const k = localStorage.getItem(OLD_PENDING_BACK); if (k) old.push(k); localStorage.removeItem(OLD_PENDING_BACK); }catch(_){}
-      try{ const k = sessionStorage.getItem(OLD_PENDING_BACK); if (k) old.push(k); sessionStorage.removeItem(OLD_PENDING_BACK); }catch(_){}
-      if (old.length) updatePendingBackList(old, []);
-      const saved = savedBackKey();
-      const keys = pendingBackList().filter(function(k){ return k !== tunePendingBackKey; });
-      if (saved && keys.indexOf(saved) !== -1) updatePendingBackList([], [saved]);   // saved since: no longer pending
-      const candidates = keys.filter(function(k){ return k !== saved; });
-      if (!candidates.length || !channel) return;
-      const claimed = new Set();
-      const listen = function(e){ if (e.data && e.data.type === 'claimed' && e.data.key) claimed.add(e.data.key); };
-      channel.addEventListener('message', listen);
-      candidates.forEach(function(k){ channel.postMessage({ type: 'claimed?', key: k }); });
-      setTimeout(function(){
-        channel.removeEventListener('message', listen);
-        const savedNow = savedBackKey();
-        const doomed = candidates.filter(function(k){ return !claimed.has(k) && k !== savedNow && !backKeyInUse(k); });
-        updatePendingBackList([], doomed.concat(candidates.filter(function(k){ return k === savedNow; })));
-        doomed.forEach(function(k){ Promise.resolve(imageStore.delete(k)).catch(function(){}); });
-      }, 1000);
+    // Replaces the dialog's card-back choice; an upload it drops releases its object URL.
+    function setTuneBackDraft(draft){
+      const old = tuneBackDraft;
+      tuneBackDraft = draft;
+      if (old && typeof old === 'object' && old !== draft) URL.revokeObjectURL(old.url);
     }
 
     async function showTuneBackThumb(){
-      const key = tuneBackKey;
+      const thumb = document.getElementById('backImageThumb');
+      const draft = tuneBackDraft, token = ++backThumbToken;
+      if (draft && typeof draft === 'object'){ thumb.src = draft.url; thumb.alt = 'Card back (not saved yet)'; return; }
+      const key = draft === 'default' ? null : tuneSavedBack;
       let url = DEFAULT_BACK_URL;
       if (key){ try{ url = (await imageStore.getUrl(key)) || DEFAULT_BACK_URL; }catch(_){} }
-      if (tuneBackKey === key) document.getElementById('backImageThumb').src = url;
+      if (token !== backThumbToken) return;
+      thumb.src = url;
+      thumb.alt = url === DEFAULT_BACK_URL
+        ? (draft === 'default' && tuneSavedBack ? 'Default card back (not saved yet)' : 'Default card back')
+        : 'Your uploaded card back';
     }
 
-    // While Save waits on the back-face lookup: say so, and hold the draft (Save and every draft
-    // control disabled; Close still works and abandons the Save). Turning it off re-enables exactly
-    // what it disabled and puts focus back where it was.
+    // While Save waits (on the back-face lookup, or storing the card back): say so, and hold the
+    // draft (Save and every draft control disabled; Close still works and abandons the Save). Turning
+    // it off re-enables exactly what it disabled and puts focus back where it was.
     let tuneBusy = null;   // { disabled: [elements], focus }
     function setTuneBusy(message){
       const status = document.getElementById('tuneStatus');
@@ -4454,39 +4396,31 @@
       if (!file) return;
       const tuneError = document.getElementById('tuneError');
       if (!looksLikeImageFile(file)){ tuneError.textContent = 'That file isn\'t an image.'; tuneError.hidden = false; return; }
+      // Read into memory now, so Save stores these bytes even if the file changes on disk meanwhile.
       const session = tuneSession, token = ++backUploadToken;
-      let stored;
-      try{ stored = await imageStore.storeBlob(file, file.type || null); }
+      let blob;
+      try{ blob = new Blob([await file.arrayBuffer()], { type: file.type || '' }); }
       catch(err){
-        console.error('Failed to store the card back', err);
-        if (session === tuneSession && token === backUploadToken){ tuneError.textContent = 'Couldn\'t store that image.'; tuneError.hidden = false; }
+        console.error('Failed to read the card back', err);
+        if (session === tuneSession && token === backUploadToken){ tuneError.textContent = 'Couldn\'t read that image.'; tuneError.hidden = false; }
         return;
       }
       // The dialog closed, or another image was chosen since: this one isn't wanted.
-      if (session !== tuneSession || token !== backUploadToken || !tuneModal.classList.contains('open')){
-        Promise.resolve(imageStore.delete(stored.key)).catch(function(){});
-        return;
-      }
-      discardPendingBack();
-      setPendingBack(stored.key);
-      tuneBackKey = stored.key;
-      tuneBackChanged = true;
+      if (session !== tuneSession || token !== backUploadToken || !tuneModal.classList.contains('open')) return;
+      setTuneBackDraft({ blob: blob, url: URL.createObjectURL(blob) });
       showTuneBackThumb();
     });
-    document.getElementById('backImageReset').addEventListener('click', function(){
+    document.getElementById('backImageDefault').addEventListener('click', function(){
       backUploadToken++;
-      discardPendingBack();
-      tuneBackKey = null;
-      tuneBackChanged = true;
+      setTuneBackDraft('default');
       showTuneBackThumb();
     });
-    // Closing without saving (Close, Esc, backdrop) drops an unsaved upload and abandons a Save that
-    // is still waiting on the back-face lookup.
+    // Closing without saving (Close, Esc, backdrop) drops the draft card back and abandons a Save that
+    // is still waiting (on the back-face lookup or on storing the card back).
     tuneModal.addEventListener('modalclose', function(){
       tuneSession++;
       backUploadToken++;
-      discardPendingBack();
-      tuneBackKey = null;
+      setTuneBackDraft(null);
       setTuneBusy(null);
     });
 
@@ -5502,10 +5436,9 @@
         } catch(_){}
       }
       // Card back images nothing uses any more: the file's if we kept ours, ours if the file's replaced it.
-      // Never the back saved now, nor one this tab is using.
-      const inUse = savedBackKey();
+      // Never the back saved now, nor the one this tab prints with.
       [importedBackKey, mineBack].forEach(function(key){
-        if (key && key !== inUse && !backKeyInUse(key) && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
+        if (key && !backKeyInUse(key) && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
       });
       syncBackPages();
       return notes.filter(function(n, i){ return n && notes.indexOf(n) === i; });
@@ -5866,8 +5799,8 @@
       tuneBackX.value = (printSettings.backOffsetXIn || 0).toFixed(2);
       tuneBackY.value = (printSettings.backOffsetYIn || 0).toFixed(2);
       // The saved back as it is now (another tab may have replaced it).
-      tuneBackKey = savedBackKey();
-      tuneBackChanged = false;
+      tuneSavedBack = savedBackKey();
+      setTuneBackDraft(null);
       showTuneBackThumb();
       tuneModal.querySelector('details.fine-tuning').open = false;
       if (fitModeSelect) fitModeSelect.value = savedFitMode;
@@ -5893,8 +5826,8 @@
 
     bindTuneButton();
 
-    // The dialog session whose Save is waiting on the back-face lookup or questions (-1: none), so a
-    // second click doesn't start another.
+    // The dialog session whose Save is waiting on the back-face lookup, the questions or storing the
+    // card back (-1: none), so a second click doesn't start another.
     let tuneSavingSession = -1;
 
     if (saveTuneBtn){
@@ -5924,32 +5857,52 @@
         // Turning double-sided printing on looks the cards' faces up, then asks about double-faced
         // cards (over this dialog). Closing the dialog during the lookup, or the first question,
         // cancels the Save: nothing is saved (and the dialog stays open after the question).
+        // An uploaded card back is stored next, and named in the settings only once it is.
         const duplex = duplexToggle.checked;
         const session = tuneSession;
-        let answers = null, lookupFailures = 0;
-        if (duplex && !printSettings.duplex){
-          tuneSavingSession = session;
-          try {
+        let answers = null, lookupFailures = 0, backDraft = null, newBack = null;
+        tuneSavingSession = session;
+        try {
+          if (duplex && !printSettings.duplex){
             setTuneBusy('Checking double-faced cards…');
             try { lookupFailures = await lookUpCardFaces(placedUrlItems()); }
             catch(err){ console.warn('Back face lookup failed', err); }
             if (session !== tuneSession) return;
             setTuneBusy(null);
             answers = await askDuplexQuestions();
-          } finally {
-            if (tuneSavingSession === session) tuneSavingSession = -1;
+            if (!answers || session !== tuneSession) return;
           }
-          if (!answers || session !== tuneSession) return;
+          backDraft = tuneBackDraft;
+          if (backDraft && typeof backDraft === 'object'){
+            setTuneBusy('Saving the card back…');
+            try { newBack = (await imageStore.storeBlob(backDraft.blob, backDraft.blob.type || null)).key; }
+            catch(err){
+              console.error('Failed to store the card back', err);
+              // Nothing is saved, and the upload is dropped: the dialog shows the saved back again.
+              if (session === tuneSession){
+                setTuneBusy(null);
+                setTuneBackDraft(null);
+                showTuneBackThumb();
+                tuneError.textContent = 'Couldn\'t store the uploaded card back, so nothing was saved. Upload it again, or choose another image.';
+                tuneError.hidden = false;
+              }
+              return;
+            }
+            // The dialog closed meanwhile: the Save is abandoned, and the stored copy goes too.
+            if (session !== tuneSession){ Promise.resolve(imageStore.delete(newBack)).catch(function(){}); return; }
+            setTuneBusy(null);
+          }
+        } finally {
+          if (tuneSavingSession === session) tuneSavingSession = -1;
         }
 
         savedFitMode = (fitModeSelect && fitModeSelect.value === 'contain') ? 'contain' : 'cover';
         // The card back and the DFC answer are saved only when this dialog changed them, so an older
         // copy here can't undo another tab's.
-        const oldBack = savedBackKey(), newBack = tuneBackChanged ? tuneBackKey : oldBack;
-        setPendingBack(null);   // saved now, so closing the dialog keeps it
+        const backChanged = backDraft !== null, replacedBack = tuneSavedBack;
         const patch = { paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle,
                         backOffsetXIn: draft.backOffsetXIn, backOffsetYIn: draft.backOffsetYIn, duplex: duplex };
-        if (tuneBackChanged) patch.backImageKey = newBack;
+        if (backChanged) patch.backImageKey = newBack;
         if (answers) patch.dfcOnBack = answers.dfcOnBack;
         savePrintSettings(patch, true);   // applyTuning lays everything out next
         applyTuning(draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn);
@@ -5966,10 +5919,13 @@
         if (answers){ rippleRemoveCards(answers.remove); saveState(); }
         closeModal(tuneModal);
         if (lookupFailures) setStatus(describeLookupFailures(lookupFailures));
-        // Redraw the back pages with the saved card back before deleting the upload it replaced.
+        // Redraw the back pages with the saved card back, then delete the stored back this Save replaced
+        // (the one saved when the dialog opened; a back another tab saved since is left alone). Checked
+        // again just before: never the back saved now (another tab may have saved meanwhile) nor the one
+        // this tab prints with.
         resolveBackImage().then(function(){
           drawBackPages();
-          if (oldBack && oldBack !== newBack && oldBack !== savedBackKey() && !backKeyInUse(oldBack)) Promise.resolve(imageStore.delete(oldBack)).catch(function(){});
+          if (backChanged && replacedBack && replacedBack !== newBack && !backKeyInUse(replacedBack)) Promise.resolve(imageStore.delete(replacedBack)).catch(function(){});
         });
       });
     }
@@ -6457,7 +6413,6 @@
       doUpdate();
       loadTheme();
       loadTuning();
-      discardLeftoverPendingBack();
       syncBackPages();
     })();
 

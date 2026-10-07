@@ -94,16 +94,18 @@ The Advanced dialog becomes the home of every print setting. Contents, top to bo
 | Bleed | Off · 1 · 2 · 3 mm | Off |
 | Cut-line style | Ticks · Full lines · Corners | Ticks; Corners is disabled with a hint when the gap is 0 |
 | Double-sided printing | toggle | Off |
-| Card back | default image, or **Upload…**; **Reset** returns to the default | Default image |
+| Card back | default image, or **Upload…**; **Use default** returns to the default | Default image |
 | ▸ Fine-tuning (collapsed) | Top margin, horizontal offset, card width/height, ratio lock, image fit (all as today), back-side offset X/Y (new, inches, default 0) | Today's values |
 
 - A live mini preview of one sheet reflects the current settings.
 - Save validates that everything fits (see 2.3) and explains what doesn't, as today.
 - Nothing in the dialog takes effect until Save, double-sided printing, the card back and the back
   offsets included; Close, Esc and the backdrop discard the draft (decided with the user). An
-  uploaded back is stored at once so it can be shown, and deleted again unless saved. Reset returns
-  gap, bleed, cut style, printer tuning and back offsets to their defaults; paper, double-sided and
-  the card back stay.
+  uploaded back stays in memory (the dialog shows it from there) and is stored only when Save keeps
+  it, so closing the dialog, or a Save that fails or is abandoned, stores nothing. Save then deletes
+  the stored back it replaced, never one that is saved now or that another tab saved after the
+  dialog opened. Reset returns gap, bleed, cut style, printer tuning and back offsets to their
+  defaults; paper, double-sided and the card back stay.
 - Gap and bleed are in millimetres; existing tuning fields stay in inches.
 - The controls-bar "Cut marks" switch toggles cut lines on/off in the chosen style.
 - All checkboxes (Show guides, Cut marks, decklist "Ignore basic lands" / "Ignore snow-covered
@@ -206,7 +208,7 @@ Thickness and colour as today.
   frame 953 × 1367 px plus an even 41 px black border = 1035 × 1449 px (≈ 418 DPI at card size).
   Re-encode to keep it reasonably small (target ≤ 300 KB) without visible loss.
 - Uploaded backs are stored in the browser's image store like other uploads; the settings keep
-  their storage key. Reset returns to `card-back.jpg`.
+  their storage key. **Use default** returns to `card-back.jpg`.
 
 ### 3.4 DFC prompt
 
