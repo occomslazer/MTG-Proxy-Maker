@@ -4483,14 +4483,24 @@
 
     const SCRYFALL_BACK_IMAGE_RE = /^https:\/\/cards\.scryfall\.io\/[a-z_]+\/back\//i;
 
+    // A name that folds to nothing (blank, whitespace) counts as no name.
+    function nameOrNull(name){ return name && foldName(name) ? name : null; }
+
     // The row a card belongs to. `backNames` maps placed DFCs' back-face URLs to the card's name.
     // Back faces are recognised before names: "Add missing DFC backs" gives them the front's name,
     // and they must not join (and disable ⇄ for) the front's row.
     function deckGroupOf(item, backNames){
       if (item.type === 'stored') return { key: 'upload:' + (item.copyOf || item.key), kind: 'upload', label: '' };
-      const backOf = backNames.get(imageUrlKey(item.url)) || (SCRYFALL_BACK_IMAGE_RE.test(item.url) ? (item.name || 'a double-faced card') : null);
-      if (backOf) return { key: 'back:' + foldName(backOf), kind: 'back', label: 'Back face of ' + backOf };
-      if (item.name) return { key: 'card:' + foldName(item.name), kind: 'card', label: item.name };
+      const urlKey = imageUrlKey(item.url);
+      const isBack = backNames.has(urlKey) || SCRYFALL_BACK_IMAGE_RE.test(item.url);
+      if (isBack){
+        // A back face whose name nobody knows (an old save) gets a row of its own, so + and − act on that card only.
+        const backName = nameOrNull(backNames.get(urlKey)) || nameOrNull(item.name);
+        return backName
+          ? { key: 'back:' + foldName(backName), kind: 'back', label: 'Back face of ' + backName }
+          : { key: 'back-url:' + urlKey, kind: 'back', label: 'Back face of a double-faced card' };
+      }
+      if (nameOrNull(item.name)) return { key: 'card:' + foldName(item.name), kind: 'card', label: item.name };
       const id = scryfallIdOf(item);
       if (id) return { key: 'id:' + id, kind: 'card', label: 'Scryfall card', needsName: true };
       return { key: 'link:' + imageUrlKey(item.url), kind: 'link', label: 'Image from ' + hostOf(item.url) };
@@ -4501,7 +4511,7 @@
       const backNames = new Map();
       for (let p = 0; p < total; p++){
         const it = itemAtPos(p);
-        if (it && it.type === 'url' && typeof it.back === 'string' && it.back) backNames.set(imageUrlKey(it.back), it.name || 'a double-faced card');
+        if (it && it.type === 'url' && typeof it.back === 'string' && it.back) backNames.set(imageUrlKey(it.back), it.name || '');
       }
       const rows = new Map();
       let uploads = 0;
