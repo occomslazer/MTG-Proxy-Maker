@@ -294,6 +294,14 @@
 
       .page:not(.current){ display: block !important; }
 
+      /* Printing while in Print Preview (its Print button, P or Ctrl+P) prints exactly like a normal
+         print: no preview bar, and none of preview's spacing (main's padding, the gap and centring
+         between pages) to push pages onto extra sheets. Its scale, shadows and display already yield
+         to the rules above; back-page labels and containment are screen-only. */
+      .preview-exit-bar { display: none !important; }
+      .preview-mode main { padding: 0 !important; }
+      .preview-mode .page-wrap { margin: 0 !important; gap: 0 !important; }
+
       .cell{ outline: none !important; }
       .cell .placeholder{ display: none !important; }
       .cell::after{ display:none !important; }
