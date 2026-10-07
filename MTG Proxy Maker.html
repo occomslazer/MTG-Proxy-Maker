@@ -1561,10 +1561,13 @@
       return isNaN(num2)?0:num2;
     }
 
-    /* Card size in px, for fitting images into their cells */
-    function cellSizePx(){
-      const cs = getComputedStyle(document.documentElement);
+    /* Card size in px, for fitting images into their cells. Pass the layout when there is one: it has
+       the same card size, while reading it back from the CSS variables costs a style recalculation
+       on every call (once per image when a whole deck is refitted). */
+    function cellSizePx(layout){
       const px = getPxPerIn();
+      if (layout) return { cellW: layout.cards[0].trim.w * px, cellH: layout.cards[0].trim.h * px };
+      const cs = getComputedStyle(document.documentElement);
       const cellW = (parseFloat(cs.getPropertyValue('--cell-w')) || 2.475) * px;
       const cellH = (parseFloat(cs.getPropertyValue('--cell-h')) || 3.465) * px;
       return { cellW, cellH };
@@ -1892,7 +1895,8 @@
       });
       model.cutMarksLayer.style.transform = shift;
       drawCutMarks(model.cutMarksLayer, layout.cutMarks, origin);
-      model.gridEl.querySelectorAll('img').forEach(function(img){ if (img.complete && img.naturalWidth) fitImage(img); });
+      const size = cellSizePx(layout);
+      model.gridEl.querySelectorAll('img').forEach(function(img){ if (img.complete && img.naturalWidth) fitImage(img, size); });
     }
 
     function drawCutMarks(layer, rects, origin){
@@ -2372,10 +2376,11 @@
     }
 
     /* ===== Rendering ===== */
-    function fitImage(el){
+    // Sizes an image for its cell. `size` is cellSizePx() worked out once by a caller fitting many.
+    function fitImage(el, size){
       var fit = savedFitMode;
       var nw = el.naturalWidth||el.width||1; var nh = el.naturalHeight||el.height||1;
-      const { cellW, cellH } = cellSizePx();
+      const { cellW, cellH } = size || cellSizePx();
       var d = computeFitDims(nw, nh, cellW, cellH, fit);
       el.style.width = d.w+'px';
       el.style.height = d.h+'px';
@@ -2498,10 +2503,10 @@
 
     // Refresh layout-dependent styling on changes
     function doUpdate(){
-      applyLayout();
+      const layout = applyLayout();
       refreshPxPerIn();
       const cur = getCurrent();
-      if (cur) cur.gridEl.querySelectorAll('img').forEach(img=>fitImage(img));
+      if (cur){ const size = cellSizePx(layout); cur.gridEl.querySelectorAll('img').forEach(img=>fitImage(img, size)); }
       updatePreviewScale();
       syncCutMarksState();
     }
@@ -6387,7 +6392,8 @@
       ctxHide();
       document.querySelector('.app').classList.add('preview-mode');
       // Force all images to re-fit at full size
-      pages.forEach(function(m){ m.gridEl.querySelectorAll('img').forEach(fitImage); });
+      const size = cellSizePx();
+      pages.forEach(function(m){ m.gridEl.querySelectorAll('img').forEach(function(img){ fitImage(img, size); }); });
       syncCutMarksState();
       syncBackPages();
     }
