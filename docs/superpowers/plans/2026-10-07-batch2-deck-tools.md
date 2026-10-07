@@ -16,7 +16,7 @@
 
 - **Branch:** `feat/deck-tools` (already created from `feat/print-pipeline`). Never push; never switch branches.
 - **App file:** `D:\Claude Projects\MTG Proxy Maker\MTG Proxy Maker.html`. Locate code by the quoted text; line numbers drift.
-- **Edit gotcha:** the Edit/Write tools turn `\uXXXX` escapes into literal characters. This plan uses literal characters (◐, ⇄, −, ·) on purpose; never write `\u` escapes. Keep the HTML's LF line endings.
+- **Edit gotcha:** the Edit/Write tools turn `\uXXXX` escapes into literal characters. This plan uses literal characters (◐, ⇄, −, ·) on purpose; never write `\u` escapes. Keep the HTML working copy's line endings (CRLF on this Windows checkout; git stores LF).
 - **Local server:** `mcp__Claude_Browser__preview_start` with `name: "proxy-maker"` (port 8765). Always `http://127.0.0.1:8765/...` — an unrelated server shadows `localhost:8765`. The Browser pane may be hidden: CSS transitions never advance and `requestAnimationFrame` never fires there.
 - **Run an in-page suite:** navigate to `http://127.0.0.1:8765/MTG%20Proxy%20Maker.html`, then in `mcp__Claude_Browser__javascript_tool`:
   ```js
