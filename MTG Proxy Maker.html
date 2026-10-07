@@ -1479,12 +1479,13 @@
                   <li><b>Contain</b> — Fits the whole image inside the cell; nothing is cropped, so you may see empty margins (“letterboxing”).</li>
                 </ul>
 
-                <h3 style="margin:12px 0 4px;">Decklist importer</h3>
+                <h3 style="margin:12px 0 4px;">Deck panel</h3>
                 <ul class="help-list">
-                  <li>Paste one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>, and Arena/Moxfield exports (<code>1 Sol Ring (CMR) 472</code>) get that exact printing. Lines starting with <code>//</code> or <code>#</code> are ignored.</li>
-                  <li>Double-faced cards use the front face; click <b>Add missing DFC backs</b> afterwards to add the reverse sides.</li>
-                  <li>Use the checkboxes to skip basics and Snow-Covered basics.</li>
-                  <li>Images are fetched via Scryfall and placed across pages automatically; unknown cards are skipped.</li>
+                  <li>Click <b>Deck</b> to show the side panel: one row per card with its count. <b>+</b> adds a copy right after the last one and <b>−</b> removes the last copy; the cards after it move over to make room or close the gap, as far as the next empty cell. Hover a row to outline its copies on the page; click a name to jump to its first copy.</li>
+                  <li><b>⇄</b> (or right-click a card → <b>Change printing…</b>, which starts on the copy you clicked) picks the art for each copy; <b>Use for all copies</b> applies one printing to every copy. Changes apply when you click <b>Done</b>.</li>
+                  <li><b>Add tokens…</b> lists the tokens and emblems your cards make, with a quantity for each. Tokens already in your layout start at 0. Press Enter in a quantity field to add.</li>
+                  <li><b>Paste decklist…</b>: one card per line (e.g., <code>4 Lightning Bolt</code>). You can include a set code like <code>[M11]</code> or <code>(M11)</code>, and Arena/Moxfield exports (<code>1 Sol Ring (CMR) 472</code>) get that exact printing. Lines starting with <code>//</code> or <code>#</code> are ignored. Use the switches to skip basics and Snow-Covered basics. Unknown cards are skipped.</li>
+                  <li>Double-faced cards use the front face; click <b>Add missing DFC backs</b> to add the reverse sides, or print them on the back with double-sided printing.</li>
                 </ul>
               </div>
             </div>

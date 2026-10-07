@@ -5,7 +5,7 @@ A single-file HTML app that pulls card images from [Scryfall](https://scryfall.c
 ## Features
 
 - **Card search** — look up any Magic card by name via the Scryfall API
-- **Decklist import** — paste a full decklist (e.g. `4 Lightning Bolt`, or an Arena/Moxfield export like `1 Sol Ring (CMR) 472` for exact printings) to auto-fill pages
+- **Deck panel** — a side panel listing every card with its count; paste a decklist, add or remove copies, change art and add tokens (see [Deck Panel](#deck-panel))
 - **Double-faced cards** — automatically add missing DFC back faces
 - **Drag & drop** — rearrange cards between cells, or drop image files directly onto the grid
 - **Multiple pages** — add as many pages as you need; all pages print at once. New cards fill the first empty cell, and **Remove gaps** closes up empty cells left by deleting cards
@@ -20,10 +20,22 @@ A single-file HTML app that pulls card images from [Scryfall](https://scryfall.c
 ## Getting Started
 
 1. Keep `card-back.jpg` and the `vendor/` folder next to `MTG Proxy Maker.html`, then open it in any modern browser (Chrome, Firefox, Edge, Safari).
-2. Search for a card by name or paste a decklist.
+2. Search for a card by name, or open the **Deck** panel and click **Paste decklist…**.
 3. Arrange cards as needed, then click **Print** (or press `P`).
 
 No build step and no server required. Opened as a file, everything works except that a PDF export can't read the default card back: upload a card back in Print settings, or serve the folder (for example `python -m http.server`) and open it from there.
+
+## Deck Panel
+
+Click **Deck** in the toolbar to show a side panel with one row per card and its count.
+
+- **Paste decklist…** — one card per line (e.g. `4 Lightning Bolt`). Add a set code like `[M11]` or `(M11)`, or paste an Arena/Moxfield export such as `1 Sol Ring (CMR) 472` for that exact printing. Switches skip basic lands and Snow-Covered basics.
+- **+ / −** — **+** adds a copy right after the row's last copy; **−** removes the last copy. The cards after it move over to make room or close the gap, as far as the next empty cell.
+- **Hover and click** — hovering a row outlines its copies on the page; clicking a name jumps to its first copy.
+- **⇄ / Change printing…** — pick the art for each copy of a card, or use one printing for all copies. Right-click a card and choose **Change printing…** to start on that copy. Changes apply when you click **Done**.
+- **Add tokens…** — lists the tokens and emblems your cards make, with a quantity for each; press Enter in a quantity field to add.
+
+The panel never prints, and print preview hides it.
 
 ## Keyboard Shortcuts
 
