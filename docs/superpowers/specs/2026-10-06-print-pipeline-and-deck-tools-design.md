@@ -194,7 +194,9 @@ Thickness and colour as today.
 
 - A double-faced card's own back face, when the player accepted the DFC prompt (uses the item's
   stored `back`; items without that information are looked up by Scryfall card ID, as
-  "Add missing DFC backs" does).
+  "Add missing DFC backs" does). While DFC backs print on the reverse, such cards (old saves,
+  imports, cards added later) are looked up in the background, once per card per session; what's
+  found is saved. Printing waits for lookups in flight (at most 10 s).
 - Otherwise the deck back image, with bleed handled as on fronts.
 - Empty cells: nothing.
 
@@ -220,6 +222,10 @@ an in-app dialog (not `window.confirm`/`prompt`) opens over the print-settings d
 Closing the first question without an answer (Esc, backdrop) cancels the whole Save: nothing is
 saved, no cards are removed and the print-settings dialog stays open. Closing the second keeps the
 separately placed backs. Saving with double-sided printing already on asks nothing.
+
+Before asking, Save looks up the faces of cards that don't record them, showing progress in the
+dialog with the draft held; closing the dialog then abandons the Save. Cards that can't be looked
+up (offline) print the card back, and the status line says how many.
 
 While DFC backs print on the reverse, "Add missing DFC backs" is disabled with an explanatory
 tooltip.
@@ -338,7 +344,9 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
   "Keep mine" / "Use the file's" (decided with the user: printer calibration is device-specific).
   Identical settings import silently. An imported back image that isn't used is discarded.
   Card backs compare by image content (an imported back is stored under a new key), and closing the
-  question keeps mine.
+  question keeps mine. If "Use the file's" turns double-sided printing on without an answer about
+  double-faced cards, the DFC questions (3.4) are asked; the import has happened, so closing the
+  first means No. A Full export always embeds double-faced cards' back-face images too.
 
 ## 7.2 Offline
 

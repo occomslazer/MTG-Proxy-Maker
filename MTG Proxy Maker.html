@@ -123,7 +123,7 @@
     /* Back pages (double-sided printing) exist only while it's on, and show only in print preview and
        when printing. Back cells look like front cells; bleed works the same way (.bleed-box above). */
     .page.back-page { display: none; }
-    .back-cell { position: absolute; box-sizing: border-box; overflow: hidden; border-radius: 8px; contain: layout paint size; }
+    .back-cell { position: absolute; box-sizing: border-box; overflow: hidden; border-radius: var(--corner-x, 8px) / var(--corner-y, 8px); contain: layout paint size; }
     .back-cell img { position: absolute; max-width: none; image-rendering: auto; }
     .page.back-page.has-bleed .back-cell { border-radius: 0; background: var(--bleed-color, #000); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .back-label { display: none; }
@@ -642,6 +642,7 @@
       <div style="display:flex;gap:8px;align-items:center;">
         <button id="saveTuneBtn">Save</button>
         <button id="resetTuneBtn" class="secondary">Reset</button>
+        <span id="tuneStatus" class="footnote" role="status" hidden></span>
         <div class="right"></div>
         <button id="closeTuneBtn" class="secondary">Close</button>
       </div>
@@ -3026,10 +3027,20 @@
     clearBtn.addEventListener('click', clearCurrentPage);
     clearAllBtn.addEventListener('click', function(){ clearAllPages(true); });
 
-    // Back pages and their images must be ready before the print dialog snapshots the document; an
-    // image that never answers can't hold printing up for long.
+    // With double-sided printing on, back pages (their back-face lookups and images) must be ready
+    // before the print dialog snapshots the document; something that never answers can't hold printing
+    // up for long. A second click while waiting is ignored. Off, printing starts at once, as always.
+    var printWaiting = false;
     function printWhenReady(){
-      Promise.race([syncBackPages(), new Promise(function(r){ setTimeout(r, 10000); })]).then(function(){
+      if (!printSettings.duplex){
+        pages.forEach(p => p.pageEl.offsetHeight);
+        window.print();
+        return;
+      }
+      if (printWaiting) return;
+      printWaiting = true;
+      Promise.race([backPagesReady(), new Promise(function(r){ setTimeout(r, 10000); })]).then(function(){
+        printWaiting = false;
         pages.forEach(p => p.pageEl.offsetHeight);
         window.print();
       });
@@ -3976,13 +3987,16 @@
     }
 
     /* ===== Double-sided printing =====
-       With it on, a back page follows each front page (print, preview and PDF), mirrored for a
-       long-edge flip. Back pages are hidden while editing. */
+       With it on, a back page follows each front page in print preview and when printing, mirrored
+       for a long-edge flip. Back pages are hidden while editing. */
     // `var`, not const/let: applyLayout() and saveState() schedule a back-page sync, and they can run
     // before this part of the script has.
     var DEFAULT_BACK_URL = 'card-back.jpg';
     var backImageUrl = DEFAULT_BACK_URL;   // the saved card back, as resolved by resolveBackImage()
     var backPagesTimer = null;
+    var backFaceLookup = null;             // the background back-face lookup in flight, if any
+    var cardFaceLookupTried = new WeakSet();   // cards already looked up this session
+    var CARD_CORNER_PX = 8;                // a card's corner radius, as on .cell
 
     // Resolves the saved card back to a URL. A stored upload that has gone missing (e.g. a lightweight
     // import from another machine) falls back to the default back.
@@ -4036,7 +4050,7 @@
       for (let i = 0; i < CELLS_PER_PAGE; i++){
         const bleedBox = document.createElement('div'); bleedBox.className = 'bleed-box'; bleedBox.setAttribute('aria-hidden', 'true');
         back.appendChild(bleedBox);
-        backCells.push({ bleedBox: bleedBox, src: null, size: null });
+        backCells.push({ bleedBox: bleedBox, src: null, box: null });
       }
       backCells.forEach(function(bc, i){
         const cell = document.createElement('div'); cell.className = 'back-cell'; cell.dataset.index = i; cell.setAttribute('aria-hidden', 'true');
@@ -4058,7 +4072,7 @@
     // size in whole pixels, and one transform moves it into place and scales it to the exact size.
     // (Front pages keep the old layout's snapping so default prints stay pixel-identical. Backs are
     // exact, so a back is never further from its front than that front's own rounding; drawn like the
-    // fronts, the two roundings could add up to a whole pixel.) Returns the laid-out size in pixels.
+    // fronts, the two roundings could add up to a whole pixel.) Returns the exact size and the scale.
     function placeExactPx(el, x, y, w, h){
       const lw = Math.max(1, Math.round(w)), lh = Math.max(1, Math.round(h));
       const n = function(v){ return Math.round(v * 1e6) / 1e6; };
@@ -4066,18 +4080,19 @@
       el.style.width = lw + 'px'; el.style.height = lh + 'px';
       el.style.transformOrigin = '0 0';
       el.style.transform = 'translate(' + n(x) + 'px, ' + n(y) + 'px) scale(' + n(w / lw) + ', ' + n(h / lh) + ')';
-      return { w: lw, h: lh };
+      return { w: w, h: h, sx: w / lw, sy: h / lh };
     }
 
     // The same for a box in inches from the page's top-left corner (1in is 96 CSS pixels).
     function placeExactBox(el, box){ return placeExactPx(el, box.x * 96, box.y * 96, box.w * 96, box.h * 96); }
 
-    // Fits and centres a back image in its cell's laid-out size (image fit mode as on fronts), exactly
-    // too; the cell's own scale then brings both to the exact card size.
+    // Fits and centres a back image in its cell (image fit mode as on fronts) at the card's exact size,
+    // given in the cell's own (unscaled) pixels, so after the cell's scale the image keeps its aspect.
     function fitBackImage(bc){
-      if (!bc.size || !bc.img.naturalWidth) return;
-      const d = computeFitDims(bc.img.naturalWidth, bc.img.naturalHeight, bc.size.w, bc.size.h, savedFitMode);
-      placeExactPx(bc.img, (bc.size.w - d.w) / 2, (bc.size.h - d.h) / 2, d.w, d.h);
+      const b = bc.box;
+      if (!b || !bc.img.naturalWidth) return;
+      const d = computeFitDims(bc.img.naturalWidth, bc.img.naturalHeight, b.w, b.h, savedFitMode);
+      placeExactPx(bc.img, (b.w - d.w) / 2 / b.sx, (b.h - d.h) / 2 / b.sy, d.w / b.sx, d.h / b.sy);
     }
 
     // Positions a back page's cells and bleed boxes at the calculator's mirrored boxes (backCards).
@@ -4088,7 +4103,10 @@
       model.backLayoutKey = key;
       model.backEl.classList.toggle('has-bleed', layout.bleedIn > 0);
       model.backCells.forEach(function(bc, i){
-        bc.size = placeExactBox(bc.cell, layout.backCards[i].trim);
+        bc.box = placeExactBox(bc.cell, layout.backCards[i].trim);
+        // Rounded corners as on the fronts once the cell's scale is applied.
+        bc.cell.style.setProperty('--corner-x', (CARD_CORNER_PX / bc.box.sx) + 'px');
+        bc.cell.style.setProperty('--corner-y', (CARD_CORNER_PX / bc.box.sy) + 'px');
         placeExactBox(bc.bleedBox, layout.backCards[i].bleed);
         fitBackImage(bc);
       });
@@ -4128,8 +4146,15 @@
     }
 
     // Resolves the card back, brings back pages up to date and waits for their images to load, so
-    // printing straight after shows every back.
+    // printing straight after shows every back. With double-sided printing off it only removes back
+    // pages left from when it was on.
     async function syncBackPages(){
+      if (!printSettings.duplex){
+        if (pageWrap.querySelector('.back-page')) drawBackPages();
+        else refreshDfcButton();
+        return;
+      }
+      lookUpBackFacesInBackground();
       await resolveBackImage();
       drawBackPages();
       const loading = Array.from(pageWrap.querySelectorAll('.back-page img')).filter(function(img){ return img.getAttribute('src') && !img.complete; });
@@ -4145,6 +4170,12 @@
       backPagesTimer = setTimeout(function(){ syncBackPages(); }, 0);
     }
 
+    // Back pages as they will print: any back-face lookup in flight finished, every back image loaded.
+    async function backPagesReady(){
+      if (backFaceLookup) await backFaceLookup;
+      await syncBackPages();
+    }
+
     function refreshDfcButton(){
       if (!addDFCBacksBtn) return;
       const onReverse = printSettings.duplex && printSettings.dfcOnBack === true;
@@ -4152,6 +4183,32 @@
       addDFCBacksBtn.title = onReverse
         ? 'Double-faced cards print their back faces on the reverse (Print settings → Double-sided printing)'
         : 'Scan placed cards and add any missing DFC back faces';
+    }
+
+    function placedUrlItems(){
+      const items = [];
+      pages.forEach(function(m){ m.items.forEach(function(it){ if (it && it.type === 'url' && it.url) items.push(it); }); });
+      return items;
+    }
+
+    // Looks up the back faces of cards that don't know theirs yet (`back` undefined: saved before cards
+    // recorded it; null means single-faced). Each card is tried once a session, so a failure (offline)
+    // isn't retried over and over. Resolves with how many couldn't be looked up.
+    async function lookUpCardFaces(items){
+      const todo = items.filter(function(it){ return it.back === undefined; });
+      todo.forEach(function(it){ cardFaceLookupTried.add(it); });
+      return todo.length ? backfillCardFaces(todo) : 0;
+    }
+
+    // While DFC backs print on the reverse, cards whose back face is unknown (old saves and imports)
+    // are looked up in the background; what's found is saved and drawn.
+    function lookUpBackFacesInBackground(){
+      if (backFaceLookup || !printSettings.duplex || printSettings.dfcOnBack !== true) return;
+      const todo = placedUrlItems().filter(function(it){ return it.back === undefined && !cardFaceLookupTried.has(it); });
+      if (!todo.length) return;
+      backFaceLookup = lookUpCardFaces(todo).then(function(){
+        if (todo.some(function(it){ return it.back !== undefined; })){ saveState(); drawBackPages(); }
+      }).catch(function(err){ console.warn('Back face lookup failed', err); }).then(function(){ backFaceLookup = null; });
     }
 
     // In-app question with a button per answer; can open on top of another dialog. Resolves with the
@@ -4176,15 +4233,13 @@
       });
     }
 
-    // The questions for turning double-sided printing on. With double-faced cards in the layout, asks
-    // whether to print their back faces on the reverse and, if so, whether to remove back faces that
-    // were also placed as separate cards (they'd print twice). Resolves with null when the first
-    // question is closed without an answer, else { dfcOnBack, remove: [cards to remove] }; closing the
-    // second question keeps the cards.
+    // The questions for double-sided printing coming on (look the cards' faces up first). With
+    // double-faced cards in the layout, asks whether to print their back faces on the reverse and, if
+    // so, whether to remove back faces that were also placed as separate cards (they'd print twice).
+    // Resolves with null when the first question is closed without an answer, else
+    // { dfcOnBack, remove: [cards to remove] }; closing the second question keeps the cards.
     async function askDuplexQuestions(){
-      const urlItems = [];
-      pages.forEach(function(m){ m.items.forEach(function(it){ if (it && it.type === 'url' && it.url) urlItems.push(it); }); });
-      await backfillCardFaces(urlItems);
+      const urlItems = placedUrlItems();
       const dfcs = urlItems.filter(function(it){ return typeof it.back === 'string' && it.back; });
       if (!dfcs.length) return { dfcOnBack: printSettings.dfcOnBack, remove: [] };
       const dfcOnBack = await askChoice(
@@ -4211,49 +4266,39 @@
       for (let p = totalPositions() - 1; p >= 0; p--){ if (doomed.has(itemAtPos(p))) rippleRemove(p); }
     }
 
-    // Turns double-sided printing on or off and saves it; turning it on asks the questions above
-    // first. Resolves true when done, false when the first question was closed (nothing changes).
-    async function setDuplex(on){
-      if (!on){ savePrintSettings({ duplex: false }); await syncBackPages(); return true; }
-      const answers = await askDuplexQuestions();
-      if (!answers) return false;
-      savePrintSettings({ duplex: true, dfcOnBack: answers.dfcOnBack });
-      rippleRemoveCards(answers.remove);
-      saveState();
-      await syncBackPages();
-      return true;
+    function describeLookupFailures(failed){
+      return failed ? failed + ' card(s) couldn\'t be checked for a back face (offline?) and will print the card back' : '';
     }
-
-    // Saves `key` (null = the default back) as the card back, redraws the back pages, then deletes the
-    // upload it replaced.
-    async function commitBackImage(key){
-      const old = printSettings.backImageKey || null;
-      savePrintSettings({ backImageKey: key || null });
-      await resolveBackImage();
-      drawBackPages();
-      if (old && old !== key) await Promise.resolve(imageStore.delete(old)).catch(function(){});
-    }
-
-    // Stores an image file and uses it as the card back. Resolves false for a file that isn't an image.
-    async function setBackImageFile(file){
-      if (!file || !looksLikeImageFile(file)) return false;
-      const stored = await imageStore.storeBlob(file, file.type || null);
-      await commitBackImage(stored.key);
-      return true;
-    }
-
-    async function resetBackImage(){ await commitBackImage(null); }
 
     /* Print settings dialog: the card back is a draft like everything else there. An upload is stored
-       straight away so it can be shown (tunePendingBackKey) and is deleted unless the dialog saves it. */
+       straight away so it can be shown (tunePendingBackKey) and is deleted unless the dialog saves it.
+       The pending key is also recorded in localStorage, so one left behind (the tab closed with the
+       dialog open) is deleted at the next start. */
     let tuneBackKey = null;          // the card back chosen in the dialog; null = the default
     let tunePendingBackKey = null;   // an upload that is stored but not saved
-    let tuneSession = 0;             // bumped when the dialog closes, so a slow upload can't land late
+    let tuneSession = 0;             // bumped when the dialog closes, so late work from it is dropped
+    let backUploadToken = 0;         // the latest upload chosen; an earlier one finishing later is dropped
+    const PENDING_BACK_KEY = 'mtgPendingBackKey';
+
+    function setPendingBack(key){
+      tunePendingBackKey = key;
+      try{
+        if (key) localStorage.setItem(PENDING_BACK_KEY, key);
+        else localStorage.removeItem(PENDING_BACK_KEY);
+      }catch(_){}
+    }
 
     function discardPendingBack(){
       const key = tunePendingBackKey;
-      tunePendingBackKey = null;
+      setPendingBack(null);
       return key ? Promise.resolve(imageStore.delete(key)).catch(function(){}) : Promise.resolve();
+    }
+
+    // At start-up: an upload the dialog never saved or discarded (the tab was closed) is deleted.
+    function discardLeftoverPendingBack(){
+      let key = null;
+      try{ key = localStorage.getItem(PENDING_BACK_KEY); localStorage.removeItem(PENDING_BACK_KEY); }catch(_){}
+      if (key && key !== printSettings.backImageKey) Promise.resolve(imageStore.delete(key)).catch(function(){});
     }
 
     async function showTuneBackThumb(){
@@ -4263,6 +4308,34 @@
       if (tuneBackKey === key) document.getElementById('backImageThumb').src = url;
     }
 
+    // While Save waits on the back-face lookup: say so, and hold the draft (Save and every draft
+    // control disabled; Close still works and abandons the Save). Turning it off re-enables exactly
+    // what it disabled and puts focus back where it was.
+    let tuneBusy = null;   // { disabled: [elements], focus }
+    function setTuneBusy(message){
+      const status = document.getElementById('tuneStatus');
+      if (message){
+        if (tuneBusy) return;
+        tuneBusy = { focus: document.activeElement, disabled: [] };
+        tuneModal.querySelectorAll('input, select, button').forEach(function(el){
+          if (el === closeTuneBtn || el.disabled) return;
+          el.disabled = true;
+          tuneBusy.disabled.push(el);
+        });
+        status.textContent = message;
+        status.hidden = false;
+        return;
+      }
+      if (!tuneBusy) return;
+      const busy = tuneBusy;
+      tuneBusy = null;
+      busy.disabled.forEach(function(el){ el.disabled = false; });
+      status.textContent = '';
+      status.hidden = true;
+      const active = document.activeElement;
+      if (tuneModal.classList.contains('open') && busy.focus && busy.focus.isConnected && (!active || active === document.body)) busy.focus.focus();
+    }
+
     document.getElementById('backImageUpload').addEventListener('click', function(){ document.getElementById('backImageInput').click(); });
     document.getElementById('backImageInput').addEventListener('change', async function(e){
       const file = e.target.files && e.target.files[0];
@@ -4270,30 +4343,38 @@
       if (!file) return;
       const tuneError = document.getElementById('tuneError');
       if (!looksLikeImageFile(file)){ tuneError.textContent = 'That file isn\'t an image.'; tuneError.hidden = false; return; }
-      const session = tuneSession;
+      const session = tuneSession, token = ++backUploadToken;
       let stored;
       try{ stored = await imageStore.storeBlob(file, file.type || null); }
       catch(err){
         console.error('Failed to store the card back', err);
-        tuneError.textContent = 'Couldn\'t store that image.'; tuneError.hidden = false;
+        if (session === tuneSession && token === backUploadToken){ tuneError.textContent = 'Couldn\'t store that image.'; tuneError.hidden = false; }
         return;
       }
-      if (session !== tuneSession || !tuneModal.classList.contains('open')){
+      // The dialog closed, or another image was chosen since: this one isn't wanted.
+      if (session !== tuneSession || token !== backUploadToken || !tuneModal.classList.contains('open')){
         Promise.resolve(imageStore.delete(stored.key)).catch(function(){});
         return;
       }
       discardPendingBack();
-      tunePendingBackKey = stored.key;
+      setPendingBack(stored.key);
       tuneBackKey = stored.key;
       showTuneBackThumb();
     });
     document.getElementById('backImageReset').addEventListener('click', function(){
+      backUploadToken++;
       discardPendingBack();
       tuneBackKey = null;
       showTuneBackThumb();
     });
-    // Closing without saving (Close, Esc, backdrop) drops an unsaved upload.
-    tuneModal.addEventListener('modalclose', function(){ tuneSession++; discardPendingBack(); });
+    // Closing without saving (Close, Esc, backdrop) drops an unsaved upload and abandons a Save that
+    // is still waiting on the back-face lookup.
+    tuneModal.addEventListener('modalclose', function(){
+      tuneSession++;
+      backUploadToken++;
+      discardPendingBack();
+      setTuneBusy(null);
+    });
 
     /* ===== Export / Import ===== */
     var exportBtn = document.getElementById('exportBtn');
@@ -4396,6 +4477,8 @@
             }
           }
           if (mode === 'full' && item.type === 'url' && SCRYFALL_IMAGE_RE.test(item.url)) scryfallUrls.add(item.url);
+          // A double-faced card's back face too, so it can print on the reverse offline.
+          if (mode === 'full' && item.type === 'url' && typeof item.back === 'string' && SCRYFALL_IMAGE_RE.test(item.back)) scryfallUrls.add(item.back);
           pageItems.push(serializeItem(item));
         }
         pagesData.push(pageItems);
@@ -4584,14 +4667,14 @@
         renderGrid(m);
       });
 
-      if (data.tuning && typeof data.tuning === 'object') await importPrintSettings(data.tuning, importedBackKey, keptKeys);
+      const settingsNote = (data.tuning && typeof data.tuning === 'object') ? await importPrintSettings(data.tuning, importedBackKey, keptKeys) : '';
 
       syncCutMarksState();
       showPage(Math.min(Math.max(0, data.current || 0), pages.length - 1));
       saveState();
       setStatus('Imported deck layout (' + pages.length + ' pages)' + (missingOwnImages
         ? ' — ' + missingOwnImages + ' of your own image(s) weren\'t in this file (lightweight exports leave them out)'
-        : ''));
+        : '') + (settingsNote ? ' — ' + settingsNote : ''));
     }
 
     // True when two blobs hold the same bytes.
@@ -4605,6 +4688,7 @@
     // Print settings are printer-specific: an imported file's apply only if they match ours or the user
     // agrees ("Keep mine" / "Use the file's"; closing the question keeps mine). `theirs` is the file's
     // saved tuning, its card back already re-stored as importedBackKey when the file carried it.
+    // Resolves with a note for the import's status ('' when there's nothing to say).
     async function importPrintSettings(theirs, importedBackKey, keptKeys){
       const saved = readSavedTuning() || {};
       // Our settings as they are in effect, so a field we never saved still compares by its value.
@@ -4631,6 +4715,7 @@
       const differs = theirsBack !== mineBack || keys.some(function(k){
         return typeof theirs[k] !== 'undefined' && JSON.stringify(theirs[k]) !== JSON.stringify(mine[k]);
       });
+      let note = '';
       const use = differs && await askChoice('This file has different print settings (paper, gaps, bleed, cut lines, double-sided printing, card back or printer tuning). Use them?',
         [{ label: 'Keep mine', value: false }, { label: "Use the file's", value: true }]) === true;
       if (use){
@@ -4639,6 +4724,16 @@
           localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, saved, theirs, { backImageKey: theirsBack })));
           loadTuning();
         } catch(_){}
+        // Double-sided printing came on without an answer about double-faced cards: ask, as Save does.
+        // The import has happened, so closing the first question means "No".
+        if (printSettings.duplex && printSettings.dfcOnBack === null){
+          const failed = await lookUpCardFaces(placedUrlItems());
+          const answers = await askDuplexQuestions();
+          savePrintSettings({ dfcOnBack: answers ? answers.dfcOnBack : false });
+          if (answers) rippleRemoveCards(answers.remove);
+          saveState();
+          note = describeLookupFailures(failed);
+        }
       }
       // Card back images nothing uses any more: the file's if we kept ours, ours if the file's replaced it.
       const inUse = printSettings.backImageKey || null;
@@ -4646,6 +4741,7 @@
         if (key && key !== inUse && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
       });
       syncBackPages();
+      return note;
     }
 
     function remapImageKey(pagesData, oldKey, newKey){
@@ -4972,6 +5068,7 @@
       setTuneRadio('gap', String(printSettings.gapMm));
       setTuneRadio('bleed', String(printSettings.bleedMm));
       setTuneRadio('cutStyle', printSettings.cutStyle);
+      setTuneBusy(null);
       duplexToggle.checked = !!printSettings.duplex;
       tuneBackX.value = (printSettings.backOffsetXIn || 0).toFixed(2);
       tuneBackY.value = (printSettings.backOffsetYIn || 0).toFixed(2);
@@ -5001,12 +5098,13 @@
 
     bindTuneButton();
 
-    // Set while Save waits for the double-faced card questions, so a second click doesn't start another.
-    let tuneSaving = false;
+    // The dialog session whose Save is waiting on the back-face lookup or questions (-1: none), so a
+    // second click doesn't start another.
+    let tuneSavingSession = -1;
 
     if (saveTuneBtn){
       saveTuneBtn.addEventListener('click', async function(){
-        if (tuneSaving) return;
+        if (tuneSavingSession === tuneSession) return;
         const draft = readTuneDraft();
         if (isFinite(draft.topIn)) tuneTopIn.value = draft.topIn.toFixed(2);
         if (isFinite(draft.leftIn)) tuneLeftIn.value = draft.leftIn.toFixed(2);
@@ -5028,20 +5126,30 @@
         }
         tuneError.hidden = true;
 
-        // Turning double-sided printing on asks about double-faced cards first (over this dialog).
-        // Closing that first question cancels the Save: nothing is saved and this dialog stays open.
+        // Turning double-sided printing on looks the cards' faces up, then asks about double-faced
+        // cards (over this dialog). Closing the dialog during the lookup, or the first question,
+        // cancels the Save: nothing is saved (and the dialog stays open after the question).
         const duplex = duplexToggle.checked;
-        let answers = null;
+        const session = tuneSession;
+        let answers = null, lookupFailures = 0;
         if (duplex && !printSettings.duplex){
-          tuneSaving = true;
-          try { answers = await askDuplexQuestions(); }
-          finally { tuneSaving = false; }
-          if (!answers || !tuneModal.classList.contains('open')) return;
+          tuneSavingSession = session;
+          try {
+            setTuneBusy('Checking double-faced cards…');
+            try { lookupFailures = await lookUpCardFaces(placedUrlItems()); }
+            catch(err){ console.warn('Back face lookup failed', err); }
+            if (session !== tuneSession) return;
+            setTuneBusy(null);
+            answers = await askDuplexQuestions();
+          } finally {
+            if (tuneSavingSession === session) tuneSavingSession = -1;
+          }
+          if (!answers || session !== tuneSession) return;
         }
 
         savedFitMode = (fitModeSelect && fitModeSelect.value === 'contain') ? 'contain' : 'cover';
         const oldBack = printSettings.backImageKey || null, newBack = tuneBackKey;
-        tunePendingBackKey = null;   // saved now, so closing the dialog keeps it
+        setPendingBack(null);   // saved now, so closing the dialog keeps it
         savePrintSettings({ paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle,
                             backOffsetXIn: draft.backOffsetXIn, backOffsetYIn: draft.backOffsetYIn,
                             duplex: duplex, dfcOnBack: answers ? answers.dfcOnBack : printSettings.dfcOnBack, backImageKey: newBack });
@@ -5055,8 +5163,10 @@
           localStorage.setItem('mtgTuning', JSON.stringify(prev));
         }catch(_){}
 
-        if (answers) rippleRemoveCards(answers.remove);
+        // The lookup may have filled in cards' back faces: save the layout too.
+        if (answers){ rippleRemoveCards(answers.remove); saveState(); }
         closeModal(tuneModal);
+        if (lookupFailures) setStatus(describeLookupFailures(lookupFailures));
         // Redraw the back pages with the saved card back before deleting the upload it replaced.
         resolveBackImage().then(function(){
           drawBackPages();
@@ -5548,6 +5658,7 @@
       doUpdate();
       loadTheme();
       loadTuning();
+      discardLeftoverPendingBack();
       syncBackPages();
     })();
 
