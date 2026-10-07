@@ -4800,6 +4800,23 @@
     function pdfCancelled(){ const e = new Error('PDF export cancelled'); e.name = 'AbortError'; return e; }
     function checkPdfCancelled(signal){ if (signal && signal.aborted) throw pdfCancelled(); }
 
+    // Settles as `promise` does, or rejects with an AbortError the moment `signal` aborts, so cancelling
+    // never waits on a long step (the back-page wait, an image read); that work ends unseen.
+    function unlessCancelled(promise, signal){
+      if (!signal) return promise;
+      return new Promise(function(resolve, reject){
+        if (signal.aborted){ reject(pdfCancelled()); return; }
+        const stop = function(){ reject(pdfCancelled()); };
+        signal.addEventListener('abort', stop, { once: true });
+        promise.then(function(v){ signal.removeEventListener('abort', stop); resolve(v); },
+                     function(e){ signal.removeEventListener('abort', stop); reject(e); });
+      });
+    }
+
+    // Opened as a file, the app can't read the files next to it: relative and file: URLs (blob: and
+    // data: images, and other sites that allow it, still work).
+    function unreadableAsFile(url){ return isFileProtocol() && !/^(https?|blob|data):/i.test(url); }
+
     // Everything that decides what the PDF draws, read once as it starts, so a change while it builds
     // (the M key, Print settings) can't give it pages of two kinds.
     function pdfSnapshot(layout){
@@ -4852,9 +4869,10 @@
       return sheets;
     }
 
-    // Why an image couldn't be read: 'fileBack' (the default card back, app opened as a file),
-    // 'stored' (an upload no longer in this browser), 'remote' (couldn't be downloaded: offline, a site
-    // that blocks copying, or no answer in time) or 'broken' (not an image the browser can decode).
+    // Why an image couldn't be read: 'fileBack' (the default card back, app opened as a file), 'file'
+    // (another image next to the app, opened as a file), 'stored' (an upload no longer in this browser),
+    // 'remote' (couldn't be downloaded: offline, a site that blocks copying, or no answer in time) or
+    // 'broken' (not an image the browser can decode).
     function pdfReadError(cause, err){
       const e = new Error('Couldn\'t read an image (' + cause + ')');
       e.pdfCause = cause;
@@ -4883,6 +4901,7 @@
             return await Promise.race([imageStore.getBlob(c.key, c.mime || null).catch(function(err){ throw pdfReadError('stored', err); }), gaveUp]);
           }
           if (!c.url) throw pdfReadError('remote');
+          if (unreadableAsFile(c.url)) throw pdfReadError('file');
           const r = await fetch(c.url, { signal: s });
           if (!r.ok) throw new Error('HTTP ' + r.status);
           return await r.blob();
@@ -4918,10 +4937,12 @@
     }
 
     // Whether an ICC profile is sRGB, by its description tag ("sRGB IEC61966-2.1" and the like), in
-    // either the v2 ('desc') or v4 ('mluc') form. Anything unreadable counts as not sRGB.
+    // either the v2 ('desc') or v4 ('mluc') form. Only the description's first 256 characters are read
+    // (a description can be huge). Anything unreadable counts as not sRGB.
     function iccIsSrgb(p){
+      const MAX = 256;
       const u32 = function(o){ return p[o] * 16777216 + p[o + 1] * 65536 + p[o + 2] * 256 + p[o + 3]; };
-      const str = function(o, n){ return String.fromCharCode.apply(null, p.subarray(o, o + n)); };
+      const str = function(o, n){ let t = ''; for (let q = o, end = Math.min(o + n, o + MAX, p.length); q < end; q++) t += String.fromCharCode(p[q]); return t; };
       if (p.length < 132) return false;
       for (let k = 0, n = u32(128); k < n && 144 + k * 12 <= p.length; k++){
         const e = 132 + k * 12;
@@ -4931,9 +4952,9 @@
         let text = '';
         if (str(off, 4) === 'desc') text = str(off + 12, Math.min(u32(off + 8), size - 12));
         else if (str(off, 4) === 'mluc'){
-          for (let r = 0, count = u32(off + 8); r < count && off + 16 + r * 12 + 12 <= off + size; r++){
+          for (let r = 0, count = u32(off + 8); r < count && off + 16 + r * 12 + 12 <= off + size && text.length < MAX; r++){
             const rec = off + 16 + r * 12, at = off + u32(rec + 8), len = u32(rec + 4);
-            for (let q = at; q + 1 < Math.min(at + len, off + size); q += 2) text += String.fromCharCode(p[q] * 256 + p[q + 1]);
+            for (let q = at; q + 1 < Math.min(at + len, off + size) && text.length < MAX; q += 2) text += String.fromCharCode(p[q] * 256 + p[q + 1]);
           }
         }
         return /sRGB/.test(text);
@@ -4944,8 +4965,12 @@
     // A JPEG a PDF shows exactly as the browser does, so it can go in as it is: baseline or progressive,
     // 8-bit greyscale or colour, upright (PDF viewers ignore EXIF rotation), no colour profile other
     // than sRGB (the browser converts others; the PDF wouldn't) and the size the browser decoded.
-    // Others (CMYK, rotated, Display P3, ...) are redrawn.
+    // Others (CMYK, rotated, Display P3, ...) are redrawn, and so is a JPEG whose headers can't be read.
     function jpegEmbeddable(b, w, h){
+      try{ return jpegHeadersEmbeddable(b, w, h); }
+      catch(err){ console.warn('PDF: couldn\'t read a JPEG\'s headers; redrawing it', err); return false; }
+    }
+    function jpegHeadersEmbeddable(b, w, h){
       let i = 2, sof = null, orientation = 1;
       const icc = [];   // APP2 "ICC_PROFILE" chunks, [sequence number, data]
       while (i + 4 <= b.length && b[i] === 0xFF){
@@ -5052,10 +5077,8 @@
       const layout = computeLayout();
       if (layout.problem) throw new Error(layout.problem);
       const snap = pdfSnapshot(layout);
-      const lib = await loadJsPdf();
-      checkPdfCancelled(signal);
-      const sheets = await pdfSheets(snap);
-      checkPdfCancelled(signal);
+      const lib = await unlessCancelled(loadJsPdf(), signal);
+      const sheets = await unlessCancelled(pdfSheets(snap), signal);
       const PT = 72, R = CARD_CORNER_PX / 96 * PT, bleed = layout.bleedIn > 0;
       const size = [layout.page.w * PT, layout.page.h * PT];
       const doc = new lib.jsPDF({ unit: 'pt', format: size, orientation: 'portrait', compress: true, putOnlyUsedFonts: true });
@@ -5080,8 +5103,7 @@
           if (!c) continue;
           if (!images.has(c.id)){
             if (options.onProgress) options.onProgress(++done, total);
-            images.set(c.id, await prepare(c, false));
-            checkPdfCancelled(signal);
+            images.set(c.id, await unlessCancelled(prepare(c, false), signal));
           }
           let im = images.get(c.id);
           if (!im){ unread.get(c.id).cards++; continue; }
@@ -5106,8 +5128,7 @@
                 images.set(c.id, null);
                 im = null;
               }else{
-                im = await prepare(c, true);
-                checkPdfCancelled(signal);
+                im = await unlessCancelled(prepare(c, true), signal);
                 images.set(c.id, im);
               }
               if (!im) unread.get(c.id).cards++;
@@ -5127,7 +5148,8 @@
           doc.restoreGraphicsState();
         }
       }
-      const blob = doc.output('blob');
+      checkPdfCancelled(signal);
+      const blob = doc.output('blob');   // synchronous: a close during it is seen as soon as it returns
       checkPdfCancelled(signal);
       const gaps = {};
       let missingCards = 0;
@@ -5146,6 +5168,8 @@
       const g = result.gaps, parts = [];
       if (g.remote) parts.push(countOf(g.remote.images, 'image', 'images') + ' couldn\'t be read (offline, or added from a website that blocks copying), so ' +
         countOf(g.remote.cards, 'card', 'cards') + ' would be blank. Download and upload ' + (g.remote.images === 1 ? 'that image' : 'those images') + ', or try again online.');
+      if (g.file) parts.push(countOf(g.file.images, 'image', 'images') + ' can\'t be read because the app was opened as a file, so ' +
+        countOf(g.file.cards, 'card', 'cards') + ' would be blank. Open the app from a web server or the hosted site, or upload ' + (g.file.images === 1 ? 'that image' : 'those images') + '.');
       if (g.stored) parts.push(countOf(g.stored.images, 'uploaded image is', 'uploaded images are') + ' no longer stored in this browser, so ' +
         countOf(g.stored.cards, 'card', 'cards') + ' would be blank. Upload ' + (g.stored.images === 1 ? 'it' : 'them') + ' again.');
       if (g.broken) parts.push(countOf(g.broken.images, 'image', 'images') + ' couldn\'t be decoded, so ' + countOf(g.broken.cards, 'card', 'cards') +
@@ -5189,7 +5213,11 @@
       pdfBuildController = ctl;
       live.textContent = 'Building PDF…';
       try{
-        const result = await buildPdf(quality, { signal: ctl.signal, onProgress: function(n, total){ count.textContent = n + '/' + total + ' images'; count.hidden = false; } });
+        // Raced against cancelling, so closing the dialog resets it at once, whatever the build is waiting on.
+        const result = await unlessCancelled(buildPdf(quality, { signal: ctl.signal, onProgress: function(n, total){
+          if (ctl.signal.aborted) return;
+          count.textContent = n + '/' + total + ' images'; count.hidden = false;
+        } }), ctl.signal);
         if (ctl.signal.aborted || session !== exportSession) throw pdfCancelled();
         if (result.missingImages){
           pendingPdf = { result: result };
@@ -5228,6 +5256,7 @@
       if (pdfSourceInfoCache.has(c.id)) return pdfSourceInfoCache.get(c.id);
       const fromBlob = async function(blob){ return { bytes: blob.size, kind: imageKind(new Uint8Array(await blob.slice(0, 4).arrayBuffer())) }; };
       const info = c.key ? await fromBlob(await readPdfSource(c, signal)) : await withReadTimeout(signal, async function(s){
+        if (unreadableAsFile(c.url)) throw pdfReadError('file');
         const r = await fetch(c.url, { signal: s });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const length = +r.headers.get('content-length'), type = (r.headers.get('content-type') || '').toLowerCase();
