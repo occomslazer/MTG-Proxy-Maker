@@ -1164,19 +1164,27 @@
       ? imageStore.ready.catch(function(err){ console.error('Image store initialization failed', err); })
       : Promise.resolve();
 
-    // `card` carries what Scryfall told us about the image: its name and back-face URL (null when
-    // the card has no back). Items without `back` came from other sources or older saves.
+    // `card` carries what Scryfall told us about the image: its name, back-face URL (null when the
+    // card has no back), set and collector number. Items without `back` came from other sources or
+    // older saves.
     function createUrlItem(url, card){
       const item = { type: 'url', url: url };
       if (card && card.back !== undefined){
         item.back = card.back || null;
         item.name = card.name || null;
       }
+      if (card && typeof card.set === 'string' && card.set){
+        item.set = card.set;
+        item.collectorNumber = card.collectorNumber != null ? String(card.collectorNumber) : null;
+      }
       return item;
     }
 
-    function createStoredItemFromKey(key, mime){
-      return { type: 'stored', key: key, mime: mime || null, resolvedSrc: null, previewSrc: null };
+    // `copyOf`: the storage key of the upload this image is a copy of (copies share its deck row).
+    function createStoredItemFromKey(key, mime, copyOf){
+      const item = { type: 'stored', key: key, mime: mime || null, resolvedSrc: null, previewSrc: null };
+      if (typeof copyOf === 'string' && copyOf) item.copyOf = copyOf;
+      return item;
     }
 
     async function createStoredItemFromDataUrl(dataUrl){
@@ -1214,7 +1222,9 @@
       if (item.type === 'stored' && item.key){
         try{
           const blob = await imageStore.getBlob(item.key, item.mime || null);
-          return createStoredItemFromBlob(blob, item.mime || null);
+          const copy = await createStoredItemFromBlob(blob, item.mime || null);
+          copy.copyOf = item.copyOf || item.key;
+          return copy;
         }catch(err){
           console.error('Failed to clone stored image', err);
           return null;
@@ -3487,17 +3497,17 @@
     }
 
     function makeCardImages(card){
-      if(!card) return { front: null, back: null, name: null };
+      if(!card) return { front: null, back: null, name: null, set: null, collectorNumber: null };
       const faces = Array.isArray(card.card_faces) ? card.card_faces : [];
       const front = pickImageFromUris(card) || pickImageFromUris(faces[0]) || null;
       const back = faces.length > 1 ? (pickImageFromUris(faces[1]) || null) : null;
-      return { front, back, name: card.name || null };
+      return { front, back, name: card.name || null, set: card.set || null, collectorNumber: card.collector_number != null ? String(card.collector_number) : null };
     }
 
     function normalizeCardImages(value){
       if(!value) return null;
       if(typeof value === 'string') return { front: value, back: null, name: null };
-      const out = { front: value.front || null, back: value.back || null, name: value.name || null };
+      const out = { front: value.front || null, back: value.back || null, name: value.name || null, set: value.set || null, collectorNumber: value.collectorNumber || null };
       if (value.substituted) out.substituted = true;
       return out;
     }
@@ -3856,7 +3866,10 @@
           const waiting = byId.get(String(card.id).toLowerCase());
           if (!waiting) continue;
           const images = makeCardImages(card);
-          waiting.forEach(function(item){ item.back = images.back; item.name = images.name; });
+          waiting.forEach(function(item){
+            item.back = images.back; item.name = images.name;
+            if (images.set){ item.set = images.set; item.collectorNumber = images.collectorNumber; }
+          });
         }
       }
       return failed;
@@ -5386,7 +5399,7 @@
             if (entry.type === 'stored' && entry.key){
               try { await imageStore.getBlob(entry.key, entry.mime || null); }
               catch(_){ missingOwnImages++; continue; }
-              items[j] = createStoredItemFromKey(entry.key, entry.mime || null);
+              items[j] = createStoredItemFromKey(entry.key, entry.mime || null, entry.copyOf);
               keptKeys.add(entry.key);
             } else if (entry.type === 'url' && entry.url){
               items[j] = createUrlItem(entry.url, entry);
@@ -5508,9 +5521,9 @@
         if (!Array.isArray(pageItems)) continue;
         for (let i = 0; i < pageItems.length; i++){
           const item = pageItems[i];
-          if (item && item.type === 'stored' && item.key === oldKey){
-            item.key = newKey;
-          }
+          if (!item || item.type !== 'stored') continue;
+          if (item.key === oldKey) item.key = newKey;
+          if (item.copyOf === oldKey) item.copyOf = newKey;
         }
       }
     }
@@ -5544,13 +5557,19 @@
     function serializeItem(item){
       if (!item || typeof item !== 'object') return null;
       if (item.type === 'stored' && item.key){
-        return { type: 'stored', key: item.key, mime: item.mime || null };
+        const out = { type: 'stored', key: item.key, mime: item.mime || null };
+        if (item.copyOf) out.copyOf = item.copyOf;
+        return out;
       }
       if (item.type === 'url' && item.url){
         const out = { type: 'url', url: item.url };
         if (item.back !== undefined){
           out.back = item.back;
           out.name = item.name || null;
+        }
+        if (item.set){
+          out.set = item.set;
+          out.collectorNumber = item.collectorNumber || null;
         }
         return out;
       }
@@ -5601,7 +5620,7 @@
             }
             try{
               if (entry.type === 'stored' && entry.key){
-                items[j] = createStoredItemFromKey(entry.key, entry.mime || null);
+                items[j] = createStoredItemFromKey(entry.key, entry.mime || null, entry.copyOf);
               } else if (entry.type === 'url' && entry.url){
                 items[j] = createUrlItem(entry.url, entry);
               } else if (entry.src && typeof entry.src === 'string'){
