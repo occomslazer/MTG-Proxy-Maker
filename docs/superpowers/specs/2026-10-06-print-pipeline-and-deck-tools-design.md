@@ -12,6 +12,38 @@ branch, reviews and push approval:
 The app stays a single HTML file (`MTG Proxy Maker.html`) plus static assets served alongside it.
 Pages stay 3 × 3 (9 cards); saved layouts and exports keep that shape.
 
+## 0. Print correctness comes first
+
+The app exists to size and fit MTG cards onto a page so they print correctly. That works today and
+must keep working; every other feature here is secondary to it. Concretely:
+
+1. **Default output is unchanged.** With default settings (Letter, gap 0, bleed off, Ticks) and any
+   existing saved printer tuning, printed output must be pixel-identical to today's (`main` at
+   `d3348fd`): same number of sheets, same page size, same card positions and sizes, same cut marks.
+2. **Existing users keep Letter.** The region-based paper default (section 1) applies only when no
+   print settings are saved yet. Saved settings without a paper field mean Letter (today's
+   behaviour), so nobody's printout changes unless they change the setting.
+3. **Real-print regression tests**, not just on-screen checks. `.claude/tests/print-harness.mjs`
+   drives headless Chrome over the DevTools protocol, builds deterministic layouts (745 × 1040
+   numbered test images), measures every card and cut mark in the **print** layout, and saves
+   Chrome's actual print output (`Page.printToPDF` honouring `@page`, i.e. what the print dialog
+   produces at 100 %). `.claude/tests/compare-prints.py` (PyMuPDF in `.claude/tests/.venv`) checks
+   sheet count and page size and compares the rendered pages pixel by pixel at 150 DPI (tolerance
+   0.05 % of pixels for anti-aliasing), writing a diff image on failure.
+   - Baseline captured from `main` at `d3348fd` in `.claude/tests/print-baseline/` before any
+     change: `one-page-plain` (9 cards, cut marks off), `two-pages-cuts` (11 cards, cut marks on),
+     `tuned-full-size` (top 0.4″, offset 0.1″, 2.5 × 3.5″ cards). Two independent runs of today's
+     app produced 0 differing pixels; the comparison was confirmed to flag a real change.
+   - Every task that touches layout, rendering or printing runs the comparison before it is
+     considered done, and again in the final review.
+4. **New settings are verified the same way.** For Letter and A4 × gap {0, 3 mm} × bleed {off, 3 mm}
+   × double-sided on/off: measured print-layout boxes equal the calculator's within 0.001″; sheet
+   count equals front pages (× 2 when double-sided); page size is exactly Letter or A4. PDF export
+   is checked against the calculator by reading image and line positions back from the PDF.
+5. **A real paper check before pushing batch 1.** The user prints a test sheet with default
+   settings, A4, a 3 mm gap with bleed, and a double-sided page, and measures a card with a ruler
+   (default 99 % size: 62.9 × 88.0 mm) and the front/back alignment.
+
 ## Decisions made with the user
 
 | # | Decision |
@@ -57,7 +89,7 @@ The Advanced dialog becomes the home of every print setting. Contents, top to bo
 
 | Setting | Options | Default |
 |---|---|---|
-| Paper | Letter · A4 | From the browser region (first of `navigator.languages` with a region): Letter for US, CA, MX, PH, CL, CO, VE, GT, CR, PA, DO, SV, NI, HN, PR, and when no region is known; A4 otherwise |
+| Paper | Letter · A4 | From the browser region (first of `navigator.languages` with a region): Letter for US, CA, MX, PH, CL, CO, VE, GT, CR, PA, DO, SV, NI, HN, PR, and when no region is known; A4 otherwise. Only when no print settings are saved yet; saved settings without a paper field mean Letter (section 0) |
 | Gap between cards | 0 · 1 · 2 · 3 mm | 0 |
 | Bleed | Off · 1 · 2 · 3 mm | Off |
 | Cut-line style | Ticks · Full lines · Corners | Ticks; Corners is disabled with a hint when the gap is 0 |
@@ -284,6 +316,8 @@ The service worker precaches `card-back.jpg` and `vendor/jspdf.umd.min.js` with 
 
 Browser tests in `.claude/tests/` (test-first, as before):
 
+- The real-print regression and geometry checks in section 0, run after every task that touches
+  layout, rendering or printing.
 - Calculator: exact boxes for Letter/A4 × gap {0, 3 mm} × bleed {off, 3 mm}; back mirroring with
   offsets; fit problems.
 - Cut marks: no segment intersects any bleed box, for all three styles.
