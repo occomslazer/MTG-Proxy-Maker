@@ -3039,7 +3039,9 @@
       }
       if (printWaiting) return;
       printWaiting = true;
-      Promise.race([backPagesReady(), new Promise(function(r){ setTimeout(r, 10000); })]).then(function(){
+      Promise.race([backPagesReady(), new Promise(function(r){ setTimeout(r, 10000); })]).catch(function(err){
+        console.warn('Back pages may be incomplete', err);
+      }).then(function(){
         printWaiting = false;
         pages.forEach(p => p.pageEl.offsetHeight);
         window.print();
@@ -4170,10 +4172,12 @@
       backPagesTimer = setTimeout(function(){ syncBackPages(); }, 0);
     }
 
-    // Back pages as they will print: any back-face lookup in flight finished, every back image loaded.
+    // Back pages as they will print: any back-face lookup finished (one in flight, or one the sync
+    // starts), every back image loaded. The print buttons cap the wait.
     async function backPagesReady(){
       if (backFaceLookup) await backFaceLookup;
       await syncBackPages();
+      if (backFaceLookup){ await backFaceLookup; await syncBackPages(); }
     }
 
     function refreshDfcButton(){
@@ -4272,19 +4276,28 @@
 
     /* Print settings dialog: the card back is a draft like everything else there. An upload is stored
        straight away so it can be shown (tunePendingBackKey) and is deleted unless the dialog saves it.
-       The pending key is also recorded in localStorage, so one left behind (the tab closed with the
-       dialog open) is deleted at the next start. */
+       The pending key is also recorded in this tab's sessionStorage, so one left behind (the tab
+       reloaded with the dialog open) is deleted when the tab starts again; another tab's draft is never
+       touched. A duplicated tab starts with a copy of that record, so before deleting, open tabs are
+       asked whether the upload is still their draft. */
     let tuneBackKey = null;          // the card back chosen in the dialog; null = the default
     let tunePendingBackKey = null;   // an upload that is stored but not saved
     let tuneSession = 0;             // bumped when the dialog closes, so late work from it is dropped
     let backUploadToken = 0;         // the latest upload chosen; an earlier one finishing later is dropped
     const PENDING_BACK_KEY = 'mtgPendingBackKey';
+    const backDraftChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('mtg-proxy-back-draft') : null;
+    if (backDraftChannel){
+      backDraftChannel.addEventListener('message', function(e){
+        const m = e.data || {};
+        if (m.type === 'claimed?' && m.key && m.key === tunePendingBackKey) backDraftChannel.postMessage({ type: 'claimed', key: m.key });
+      });
+    }
 
     function setPendingBack(key){
       tunePendingBackKey = key;
       try{
-        if (key) localStorage.setItem(PENDING_BACK_KEY, key);
-        else localStorage.removeItem(PENDING_BACK_KEY);
+        if (key) sessionStorage.setItem(PENDING_BACK_KEY, key);
+        else sessionStorage.removeItem(PENDING_BACK_KEY);
       }catch(_){}
     }
 
@@ -4294,11 +4307,24 @@
       return key ? Promise.resolve(imageStore.delete(key)).catch(function(){}) : Promise.resolve();
     }
 
-    // At start-up: an upload the dialog never saved or discarded (the tab was closed) is deleted.
+    // At start-up: an upload this tab's dialog never saved or discarded (the tab was reloaded) is
+    // deleted. A record an earlier version kept in localStorage, shared by every tab, is only dropped:
+    // its upload may be another open tab's draft.
     function discardLeftoverPendingBack(){
       let key = null;
-      try{ key = localStorage.getItem(PENDING_BACK_KEY); localStorage.removeItem(PENDING_BACK_KEY); }catch(_){}
-      if (key && key !== printSettings.backImageKey) Promise.resolve(imageStore.delete(key)).catch(function(){});
+      try{ localStorage.removeItem(PENDING_BACK_KEY); }catch(_){}
+      try{ key = sessionStorage.getItem(PENDING_BACK_KEY); sessionStorage.removeItem(PENDING_BACK_KEY); }catch(_){}
+      if (!key || key === printSettings.backImageKey) return;
+      const discard = function(){ if (key !== printSettings.backImageKey && key !== tunePendingBackKey) Promise.resolve(imageStore.delete(key)).catch(function(){}); };
+      if (!backDraftChannel){ discard(); return; }
+      let claimed = false;
+      const listen = function(e){ if (e.data && e.data.type === 'claimed' && e.data.key === key) claimed = true; };
+      backDraftChannel.addEventListener('message', listen);
+      backDraftChannel.postMessage({ type: 'claimed?', key: key });
+      setTimeout(function(){
+        backDraftChannel.removeEventListener('message', listen);
+        if (!claimed) discard();
+      }, 1000);
     }
 
     async function showTuneBackThumb(){
@@ -4667,7 +4693,8 @@
         renderGrid(m);
       });
 
-      const settingsNote = (data.tuning && typeof data.tuning === 'object') ? await importPrintSettings(data.tuning, importedBackKey, keptKeys) : '';
+      if (data.tuning && typeof data.tuning === 'object') await importPrintSettings(data.tuning, importedBackKey, keptKeys);
+      const settingsNote = await askImportedDfcQuestions();
 
       syncCutMarksState();
       showPage(Math.min(Math.max(0, data.current || 0), pages.length - 1));
@@ -4688,7 +4715,6 @@
     // Print settings are printer-specific: an imported file's apply only if they match ours or the user
     // agrees ("Keep mine" / "Use the file's"; closing the question keeps mine). `theirs` is the file's
     // saved tuning, its card back already re-stored as importedBackKey when the file carried it.
-    // Resolves with a note for the import's status ('' when there's nothing to say).
     async function importPrintSettings(theirs, importedBackKey, keptKeys){
       const saved = readSavedTuning() || {};
       // Our settings as they are in effect, so a field we never saved still compares by its value.
@@ -4715,7 +4741,6 @@
       const differs = theirsBack !== mineBack || keys.some(function(k){
         return typeof theirs[k] !== 'undefined' && JSON.stringify(theirs[k]) !== JSON.stringify(mine[k]);
       });
-      let note = '';
       const use = differs && await askChoice('This file has different print settings (paper, gaps, bleed, cut lines, double-sided printing, card back or printer tuning). Use them?',
         [{ label: 'Keep mine', value: false }, { label: "Use the file's", value: true }]) === true;
       if (use){
@@ -4724,16 +4749,6 @@
           localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, saved, theirs, { backImageKey: theirsBack })));
           loadTuning();
         } catch(_){}
-        // Double-sided printing came on without an answer about double-faced cards: ask, as Save does.
-        // The import has happened, so closing the first question means "No".
-        if (printSettings.duplex && printSettings.dfcOnBack === null){
-          const failed = await lookUpCardFaces(placedUrlItems());
-          const answers = await askDuplexQuestions();
-          savePrintSettings({ dfcOnBack: answers ? answers.dfcOnBack : false });
-          if (answers) rippleRemoveCards(answers.remove);
-          saveState();
-          note = describeLookupFailures(failed);
-        }
       }
       // Card back images nothing uses any more: the file's if we kept ours, ours if the file's replaced it.
       const inUse = printSettings.backImageKey || null;
@@ -4741,7 +4756,21 @@
         if (key && key !== inUse && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
       });
       syncBackPages();
-      return note;
+    }
+
+    // After any import: double-sided printing is on with no answer about double-faced cards, and the
+    // layout has some, so ask, as Save does when turning it on. The import has happened, so closing
+    // the first question means "No". Resolves with a note for the import's status.
+    async function askImportedDfcQuestions(){
+      if (!printSettings.duplex || printSettings.dfcOnBack !== null) return '';
+      const failed = await lookUpCardFaces(placedUrlItems());
+      const answers = await askDuplexQuestions();
+      if (answers && answers.dfcOnBack === null) return describeLookupFailures(failed);   // no DFCs
+      savePrintSettings({ dfcOnBack: answers ? answers.dfcOnBack : false });
+      if (answers) rippleRemoveCards(answers.remove);
+      saveState();
+      syncBackPages();
+      return describeLookupFailures(failed);
     }
 
     function remapImageKey(pagesData, oldKey, newKey){

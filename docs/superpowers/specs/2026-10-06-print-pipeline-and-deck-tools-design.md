@@ -344,9 +344,10 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
   "Keep mine" / "Use the file's" (decided with the user: printer calibration is device-specific).
   Identical settings import silently. An imported back image that isn't used is discarded.
   Card backs compare by image content (an imported back is stored under a new key), and closing the
-  question keeps mine. If "Use the file's" turns double-sided printing on without an answer about
-  double-faced cards, the DFC questions (3.4) are asked; the import has happened, so closing the
-  first means No. A Full export always embeds double-faced cards' back-face images too.
+  question keeps mine. If after an import (either answer, or no question) double-sided printing is
+  on with no answer about double-faced cards and the layout has some, the DFC questions (3.4) are
+  asked; the import has happened, so closing the first means No. A Full export always embeds
+  double-faced cards' back-face images too.
 
 ## 7.2 Offline
 
