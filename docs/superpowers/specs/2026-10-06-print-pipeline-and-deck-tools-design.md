@@ -139,7 +139,8 @@ Geometry (w, h = card size; b = bleed; g = gap; all inches):
 - Bleed off: identical to today's output.
 - Bleed on: the bleed box is filled with the card's border colour; the image is drawn untouched at
   the trim box on top (image fit Cover/Contain applies inside the trim box). Rounded transparent
-  corners therefore show the border colour.
+  corners therefore show the border colour, and so do Contain's letterbox areas (one continuous
+  frame). A card remembers its sampled colour, so moving it never shows another card's colour.
 - Guides (dashed outlines) mark trim boxes.
 
 ### 2.3 Border-colour sampling
