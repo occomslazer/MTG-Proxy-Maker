@@ -306,6 +306,8 @@ tooltip.
 - Uploaded images: one row per original image; copies made by + or duplicate record `copyOf`
   (the original's storage key) and join their original's row. Rows read "Your image 1, 2…".
 - Images linked from other sites: "Image from <host>".
+- A double-faced card's back face placed as its own card (e.g. by "Add missing DFC backs"):
+  "Back face of <card name>".
 - Items without a stored name (older saves) are looked up once by Scryfall card ID.
 - Each row: name (◐ for double-faced cards), a "N arts" note when copies use different printings,
   count, **−** / **+**, **⇄** (Scryfall cards only).
