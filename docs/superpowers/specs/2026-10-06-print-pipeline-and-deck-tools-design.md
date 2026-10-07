@@ -144,9 +144,11 @@ Geometry (w, h = card size; b = bleed; g = gap; all inches):
 
 ### 2.3 Border-colour sampling
 
-- Sample a band 1.5–3 % inside each image edge, skipping pixels with alpha < 200; take the median
-  colour. Cache by image URL (or storage key). Fall back to black if the image can't be read
-  (e.g. a non-CORS image from another site).
+- Sample the outer border: a band 0.5–2 % inside each image edge, skipping pixels with alpha < 200.
+  Group colours into 16 levels per channel and use the average of the most common group (a
+  per-channel median, the first design, could invent colours not on the card and read into the art
+  on thin borders). Cache by image URL. Fall back to black if the image can't be read (e.g. a
+  non-CORS image from another site).
 - Scryfall images are already loaded with CORS; uploaded images are same-origin blobs.
 
 ### 2.4 Cut lines
