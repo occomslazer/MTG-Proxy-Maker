@@ -1424,6 +1424,7 @@
     const LETTER_REGIONS = new Set(['US','CA','MX','PH','CL','CO','VE','GT','CR','PA','DO','SV','NI','HN','PR']);
     const PRINT_DEFAULTS = { paper: 'letter', gapMm: 0, bleedMm: 0, cutStyle: 'ticks', duplex: false,
                              dfcOnBack: null, backImageKey: null, backOffsetXIn: 0, backOffsetYIn: 0 };
+    const PLAIN_PRINT = { gapMm: 0, bleedMm: 0, backOffsetXIn: 0, backOffsetYIn: 0 };
     let printSettings = Object.assign({}, PRINT_DEFAULTS);
 
     function regionOf(tag){
@@ -1496,7 +1497,8 @@
         paper: printSettings.paper, gapMm: printSettings.gapMm, bleedMm: printSettings.bleedMm, cutStyle: printSettings.cutStyle,
         topIn: readInchesVar('--grid-top', 0.25), leftIn: readInchesVar('--grid-left', 0),
         cardWIn: readInchesVar('--cell-w', 2.475), cardHIn: readInchesVar('--cell-h', 3.465),
-        backOffsetXIn: printSettings.backOffsetXIn, backOffsetYIn: printSettings.backOffsetYIn
+        backOffsetXIn: printSettings.backOffsetXIn, backOffsetYIn: printSettings.backOffsetYIn,
+        duplex: printSettings.duplex
       };
     }
 
@@ -1511,8 +1513,11 @@
       const grid = { w: cols * bw + (cols - 1) * g, h: rows * bh + (rows - 1) * g };
       grid.x = (page.w - grid.w) / 2 + s.leftIn;
       grid.y = s.topIn;
+      // Long-edge flip: mirror around the page centre, but keep the horizontal printer offset (leftIn)
+      // in the back page's own frame — the printer shifts both sides the same way — then add the
+      // duplex-specific back offset.
       const mirror = function(box){
-        return { x: page.w - box.x - box.w + (s.backOffsetXIn || 0), y: box.y + (s.backOffsetYIn || 0), w: box.w, h: box.h };
+        return { x: page.w - box.x - box.w + 2 * s.leftIn + (s.backOffsetXIn || 0), y: box.y + (s.backOffsetYIn || 0), w: box.w, h: box.h };
       };
       const cards = [], backCards = [];
       for (let r = 0; r < rows; r++){
@@ -1535,7 +1540,7 @@
     }
 
     // Cut marks as thin rectangles, in page inches.
-    function cutMarkRects(style, cards, grid, page, g){
+    function rawCutMarkRects(style, cards, grid, page, g){
       const T = CUT_MARK.thicknessIn, L = CUT_MARK.lengthIn, I = CUT_MARK.insetIn;
       const xs = uniqueSorted(cards.reduce(function(a, c){ return a.concat([c.trim.x, c.trim.x + c.trim.w]); }, []));
       const ys = uniqueSorted(cards.reduce(function(a, c){ return a.concat([c.trim.y, c.trim.y + c.trim.h]); }, []));
@@ -1545,7 +1550,7 @@
         const free = function(lo, hi, blocked){
           blocked.sort(function(a, b){ return a[0] - b[0]; });
           const out = []; let at = lo;
-          blocked.forEach(function(iv){ if (iv[0] > at) out.push([at, iv[0]]); at = Math.max(at, iv[1]); });
+          blocked.forEach(function(iv){ if (iv[0] > at) out.push([at, Math.min(iv[0], hi)]); at = Math.max(at, iv[1]); });
           if (at < hi) out.push([at, hi]);
           return out.filter(function(iv){ return iv[1] - iv[0] > 1e-6; });
         };
@@ -1563,7 +1568,7 @@
       }
       if (style === 'corners'){
         if (!(g > 0)) return marks;
-        const arm = Math.min(CORNER_ARM_MAX_IN, g / 2);
+        const arm = Math.min(CORNER_ARM_MAX_IN, 0.4 * g);   // leaves a break between neighbouring cards' arms
         cards.forEach(function(c){
           [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function(d){
             const tx = d[0] < 0 ? c.trim.x : c.trim.x + c.trim.w, ty = d[1] < 0 ? c.trim.y : c.trim.y + c.trim.h;
@@ -1586,6 +1591,14 @@
       return marks;
     }
 
+    // Cut marks clipped to the page, so nothing can spill onto an extra printed sheet.
+    function cutMarkRects(style, cards, grid, page, g){
+      return rawCutMarkRects(style, cards, grid, page, g).map(function(m){
+        const x1 = Math.max(0, m.x), y1 = Math.max(0, m.y), x2 = Math.min(page.w, m.x + m.w), y2 = Math.min(page.h, m.y + m.h);
+        return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+      }).filter(function(m){ return m.w > 1e-6 && m.h > 1e-6; });
+    }
+
     // Why a layout can't be printed, in words, or '' when it fits on the page.
     function layoutProblem(s, page, grid, b, g){
       if (![s.topIn, s.leftIn, s.cardWIn, s.cardHIn].every(isFinite)) return 'Enter a number in every field.';
@@ -1603,6 +1616,16 @@
         return 'Cards this wide don\'t fit: ' + cols + ' columns × ' + s.cardWIn.toFixed(3) + '″' + extras +
           (s.leftIn ? ' shifted ' + Math.abs(s.leftIn).toFixed(2) + '″' : '') + ' need ' + neededW.toFixed(2) +
           '″, but the page is ' + fmt(page.w) + '″ wide.';
+      }
+      if (s.duplex){
+        const room = (page.w - grid.w) / 2, shiftX = s.leftIn + (s.backOffsetXIn || 0);
+        if (Math.abs(shiftX) > room + 1e-6){
+          return 'The back side runs off the page: offset ' + shiftX.toFixed(2) + '″ but there is only ' + room.toFixed(2) + '″ of room on each side.';
+        }
+        const top = s.topIn + (s.backOffsetYIn || 0);
+        if (top < -1e-6 || top + grid.h > page.h + 1e-6){
+          return 'The back side runs off the page: its cards would span ' + top.toFixed(2) + '–' + (top + grid.h).toFixed(2) + '″ on a ' + fmt(page.h) + '″ page.';
+        }
       }
       return '';
     }
@@ -4249,11 +4272,23 @@
             // Saved by an older version or carried in by an imported file
             var problem = tuningProblem(top, left, w, h);
             if (problem){
-              console.warn('Ignoring saved printer tuning: ' + problem);
-              setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
-              top = 0.25; left = 0; w = 2.4750; h = 3.4650;
+              // Find the culprit: the print settings (gap, bleed, back offsets) or the printer tuning.
+              if (!computeLayout(Object.assign(currentLayoutSettings(), PLAIN_PRINT, { topIn: top, leftIn: left, cardWIn: w, cardHIn: h })).problem){
+                savePrintSettings(PLAIN_PRINT);
+                setStatus('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
+              } else {
+                console.warn('Ignoring saved printer tuning: ' + problem);
+                setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
+                top = 0.25; left = 0; w = 2.4750; h = 3.4650;
+                if (tuningProblem(top, left, w, h)) savePrintSettings(PLAIN_PRINT);
+              }
             }
             applyTuning(top, left, w, h);
+          }
+          // Print settings that don't fit even with the current tuning (e.g. from an imported file).
+          if (computeLayout().problem){
+            savePrintSettings(PLAIN_PRINT);
+            setStatus('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
           }
           if (tuneScaleLock){
             tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
