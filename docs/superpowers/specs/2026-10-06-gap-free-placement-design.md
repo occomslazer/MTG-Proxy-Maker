@@ -48,8 +48,8 @@ A placement has an optional **anchor**:
 
 When any placed card lands on a page other than the one being viewed, the message names the
 page(s): "Added Lightning Bolt (page 1)", "Added 3 images (pages 1–2)",
-"Done — 1 not found (pages 1–3)". Messages for cards that land only on the current page are
-unchanged.
+"Done — 1 not found (pages 1–3)". When cards land only on the current page there is no page
+suffix. The search box now names the card it added ("Added Opt") instead of just "Added".
 
 ## Remove gaps
 
