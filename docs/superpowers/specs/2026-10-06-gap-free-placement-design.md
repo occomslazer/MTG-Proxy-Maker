@@ -61,8 +61,9 @@ suffix. The search box now names the card it added ("Added Opt") instead of just
 - Pages left empty at the end are removed; at least one page always remains. The current page is
   kept if it still exists, otherwise the last page is shown.
 - A pending internal C/X copy or cut is cancelled, since positions change.
-- Saves state. Status: "Moved N card(s); removed M empty page(s)" (the page clause only when
-  M > 0), or "No gaps to remove" when nothing would change.
+- Saves state. Status: "Moved N card(s); removed M empty page(s)", leaving out whichever part is
+  zero ("Removed 1 empty page(s)" when no card moves), or "No gaps to remove" when nothing would
+  change.
 
 ## Testing
 
