@@ -109,7 +109,7 @@
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
-    body.hide-guides .cell { outline-color: transparent !important; }
+    body.hide-guides .cell:not(.clipboard-cut) { outline-color: transparent !important; }
 
     .cell { outline: 0.5pt dashed var(--guide-color); outline-offset: -0.5pt; background: #f9fafb; position: absolute; box-sizing: border-box; overflow: hidden; display: grid; place-items: center; user-select: none; touch-action: none; border-radius: 8px; contain: layout paint size; }
     .cell img { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: none; image-rendering: auto; -webkit-user-drag: none; user-select: none; }
@@ -275,7 +275,7 @@
 
       .page:not(.current){ display: block !important; }
 
-      .cell{ border: none !important; outline: none !important; }
+      .cell{ outline: none !important; }
       .cell .placeholder{ display: none !important; }
       .cell::after{ display:none !important; }
       .ctx-menu { display: none !important; }
@@ -1371,7 +1371,7 @@
     }
 
     /* Card size in px, for fitting images into their cells */
-    function readCssInches(){
+    function cellSizePx(){
       const cs = getComputedStyle(document.documentElement);
       const px = getPxPerIn();
       const cellW = (parseFloat(cs.getPropertyValue('--cell-w')) || 2.475) * px;
@@ -1615,11 +1615,14 @@
       el.style.height = inch(box.h);
     }
 
+    // Everything that changes how a page is drawn: layout settings plus the image fit mode.
+    function layoutKey(){ return JSON.stringify(currentLayoutSettings()) + '|' + (fitModeSelect ? fitModeSelect.value : ''); }
+
     // Applies the current layout everywhere: paper size (screen and print dialog), every page's grid,
     // cells and cut marks. Returns the layout.
     function applyLayout(){
       const layout = computeLayout();
-      const key = JSON.stringify(currentLayoutSettings());
+      const key = layoutKey();
       const root = document.documentElement.style;
       root.setProperty('--page-w', inch(layout.page.w));
       root.setProperty('--page-h', inch(layout.page.h));
@@ -1637,7 +1640,7 @@
     // untransformed boxes to whole CSS pixels when printing, but not transforms).
     function layoutPage(model, layout, key){
       layout = layout || computeLayout();
-      key = key || JSON.stringify(currentLayoutSettings());
+      key = key || layoutKey();
       if (model.layoutKey === key) return;
       model.layoutKey = key;
       const shiftX = layout.grid.x - (layout.page.w - layout.grid.w) / 2;
@@ -2061,7 +2064,7 @@
     function fitImage(el){
       var fit = fitModeSelect.value;
       var nw = el.naturalWidth||el.width||1; var nh = el.naturalHeight||el.height||1;
-      const { cellW, cellH } = readCssInches();
+      const { cellW, cellH } = cellSizePx();
       var d = computeFitDims(nw, nh, cellW, cellH, fit);
       el.style.width = d.w+'px';
       el.style.height = d.h+'px';
@@ -4125,7 +4128,7 @@
       cardWIn = Number(cardWIn) || readInchesVar('--cell-w', BASE_W_IN);
       cardHIn = Number(cardHIn) || readInchesVar('--cell-h', BASE_H_IN);
 
-      // apply CSS custom properties (in inches so readCssInches() stays exact)
+      // apply CSS custom properties (in inches so cellSizePx() stays exact)
       document.documentElement.style.setProperty('--grid-top', topIn.toFixed(2)+'in');
       document.documentElement.style.setProperty('--grid-left', leftIn.toFixed(2)+'in');
       document.documentElement.style.setProperty('--cell-w', cardWIn.toFixed(4)+'in');
