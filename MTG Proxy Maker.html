@@ -1592,40 +1592,26 @@
       return false;
     }
 
-    async function processDroppedImageData(dt, opts){
+    async function processDroppedImageData(dt, placement){
       if (!dt) return 0;
       const files = dt.files ? filterImageFiles(dt.files) : [];
-      if (files.length){
-        if (opts && opts.targetCell && opts.targetCell.model){
-          return handleFilesIntoCell(opts.targetCell.model, opts.targetCell.index, files);
-        }
-        const fileOpts = {};
-        if (opts && typeof opts.startPage === 'number') fileOpts.startPage = opts.startPage;
-        if (opts && opts.preferredSlot) fileOpts.preferredSlot = opts.preferredSlot;
-        if (opts && opts.allowOverwrite) fileOpts.allowOverwrite = true;
-        return handleFiles(files, fileOpts);
-      }
-
+      if (files.length) return handleFiles(files, placement);
       const urls = extractUrlsFromDataTransfer(dt);
-      if (urls.length){
-        const urlOpts = {};
-        if (opts && typeof opts.startPage === 'number') urlOpts.startPage = opts.startPage;
-        if (opts && opts.preferredSlot) urlOpts.preferredSlot = opts.preferredSlot;
-        if (opts && opts.allowOverwrite) urlOpts.allowOverwrite = true;
-        return handleImageUrls(urls, urlOpts);
-      }
+      if (urls.length) return handleImageUrls(urls, placement);
       return 0;
     }
 
-    async function handleDropEvent(e, opts){
+    // anchor: cellAnchor(...), pageAnchor(...) or null
+    async function handleDropEvent(e, anchor){
       const dt = e.dataTransfer || null;
       if (!dataTransferHasImage(dt)) return;
       e.preventDefault();
       e.stopPropagation();
       try {
-        const placed = await processDroppedImageData(dt, opts);
+        const placement = createPlacement(anchor);
+        const placed = await processDroppedImageData(dt, placement);
         if (placed > 0){
-          setStatus(placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`);
+          setStatus((placed === 1 ? 'Added image from drop' : `Added ${placed} images from drop`) + describePlacedPages(placement.pagesUsed));
         } else {
           setStatus('No images found in dropped data');
         }
@@ -1876,14 +1862,7 @@
         });
         cell.addEventListener('drop', async (e) => {
           cell.classList.remove('drop-target');
-          const pageIdx = pages.indexOf(model);
-          const preferredSlot = pageIdx === -1 ? null : { page: pageIdx, index: idx };
-          await handleDropEvent(e, {
-            targetCell: { model, index: idx },
-            preferredSlot,
-            startPage: pageIdx >= 0 ? pageIdx : undefined,
-            allowOverwrite: true
-          });
+          await handleDropEvent(e, cellAnchor(model, idx));
         });
 
         cell.addEventListener('dblclick', function(){
@@ -1909,8 +1888,7 @@
           if (!dataTransferHasImage(e.dataTransfer)) return;
           const p=model.pageEl;
           if(evt==='drop'){
-            const pageIdx = pages.indexOf(model);
-            await handleDropEvent(e, { startPage: pageIdx >= 0 ? pageIdx : undefined });
+            await handleDropEvent(e, pageAnchor(pages.indexOf(model)));
           } else {
             e.preventDefault();
             e.stopPropagation();
@@ -2109,10 +2087,11 @@
         return;
       }
 
-      handleFiles(selected)
+      const placement = createPlacement();
+      handleFiles(selected, placement)
         .then(function(count){
           if(count){
-            setStatus(count === 1 ? 'Added 1 image' : `Added ${count} images`);
+            setStatus((count === 1 ? 'Added 1 image' : `Added ${count} images`) + describePlacedPages(placement.pagesUsed));
           } else {
             setStatus('No images added');
           }
@@ -2143,7 +2122,7 @@
         if (!current || !current.pageEl) return;
         const pageIdx = pages.indexOf(current);
         if(evt==='drop'){
-          await handleDropEvent(e, { startPage: pageIdx >= 0 ? pageIdx : undefined });
+          await handleDropEvent(e, pageAnchor(pageIdx));
         } else {
           e.preventDefault();
           e.stopPropagation();
@@ -2313,14 +2292,6 @@
       return results;
     }
 
-    function preferredSlotForPage(pageIdx){
-      if(typeof pageIdx !== 'number' || pageIdx < 0 || pageIdx >= pages.length) return null;
-      const model = pages[pageIdx];
-      if(!model || !model.items) return null;
-      const empty = model.items.findIndex(function(item){ return !item; });
-      return empty !== -1 ? { page: pageIdx, index: empty } : null;
-    }
-
     async function pasteImageFromClipboard(target){
       if(!clipboardCanReadImage()){
         setStatus(CLIPBOARD_UNAVAILABLE_MSG);
@@ -2332,21 +2303,13 @@
           setStatus('Clipboard does not contain image data');
           return false;
         }
-        let placed = 0;
-        if(target && target.model && typeof target.index === 'number'){
-          placed = await handleFilesIntoCell(target.model, target.index, files);
-        } else if(target && typeof target.pageIndex === 'number'){
-          const preferred = preferredSlotForPage(target.pageIndex);
-          placed = await handleFiles(files, {
-            startPage: target.pageIndex,
-            preferredSlot: preferred,
-            allowOverwrite: !!target.allowOverwrite
-          });
-        } else {
-          placed = await handleFiles(files);
-        }
+        const anchor = (target && target.model && typeof target.index === 'number') ? cellAnchor(target.model, target.index)
+          : (target && typeof target.pageIndex === 'number') ? pageAnchor(target.pageIndex)
+          : null;
+        const placement = createPlacement(anchor);
+        const placed = await handleFiles(files, placement);
         if(placed > 0){
-          setStatus(placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`);
+          setStatus((placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) + describePlacedPages(placement.pagesUsed));
           return true;
         }
         setStatus('Clipboard does not contain image data');
@@ -2376,20 +2339,16 @@
         const clipboardData = e.clipboardData || window.clipboardData || null;
         const focusedCell = document.activeElement && document.activeElement.closest ? document.activeElement.closest('.cell') : null;
         const resolved = focusedCell ? resolveModelFromCellEl(focusedCell) : null;
-        const resolvedPageIdx = resolved ? pages.indexOf(resolved.model) : -1;
+        const anchor = resolved && resolved.model ? cellAnchor(resolved.model, resolved.index) : null;
 
         if(clipboardData){
           const files = collectImageFilesFromClipboardData(clipboardData);
           if(files.length){
             e.preventDefault();
             e.stopImmediatePropagation();
-            let placed = 0;
-            if(resolved && resolved.model){
-              placed = await handleFilesIntoCell(resolved.model, resolved.index, files);
-            } else {
-              placed = await handleFiles(files);
-            }
-            setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
+            const placement = createPlacement(anchor);
+            const placed = await handleFiles(files, placement);
+            setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) + describePlacedPages(placement.pagesUsed) : 'Clipboard does not contain image data');
             return;
           }
 
@@ -2403,17 +2362,9 @@
           if(urls.length){
             e.preventDefault();
             e.stopImmediatePropagation();
-            let placed = 0;
-            if(resolved && resolved.model){
-              placed = await handleImageUrls(urls, {
-                preferredSlot: resolvedPageIdx === -1 ? null : { page: resolvedPageIdx, index: resolved.index },
-                startPage: resolvedPageIdx,
-                allowOverwrite: true
-              });
-            } else {
-              placed = await handleImageUrls(urls, { startPage: currentPage });
-            }
-            setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) : 'Clipboard does not contain image data');
+            const placement = createPlacement(anchor);
+            const placed = await handleImageUrls(urls, placement);
+            setStatus(placed ? (placed === 1 ? 'Pasted image from clipboard' : `Pasted ${placed} images from clipboard`) + describePlacedPages(placement.pagesUsed) : 'Clipboard does not contain image data');
             return;
           }
         }
@@ -2421,10 +2372,7 @@
         if(clipboardCanReadImage()){
           e.preventDefault();
           e.stopImmediatePropagation();
-          const target = resolved && resolved.model
-            ? { model: resolved.model, index: resolved.index, pageIndex: resolvedPageIdx, allowOverwrite: true }
-            : { pageIndex: currentPage };
-          await pasteImageFromClipboard(target);
+          await pasteImageFromClipboard(resolved && resolved.model ? { model: resolved.model, index: resolved.index } : null);
           return;
         }
 
@@ -2496,12 +2444,9 @@
 
     async function assignFileToIndex(file, pageIdx, cellIdx){
       if(!looksLikeImageFile(file)) return 0;
-      const model = pages[pageIdx];
-      if(!model) return 0;
-      return handleFilesIntoCell(model, cellIdx, [file]);
+      if(!pages[pageIdx]) return 0;
+      return handleFiles([file], createPlacement({ replaceAt: { page: pageIdx, index: cellIdx } }));
     }
-
-    function nextEmptySlot(startPage){ if(startPage==null) startPage=0; for(var p=startPage;p<pages.length;p++){ var model=pages[p]; var idx=model.items.findIndex(x=>x==null); if(idx!==-1) return {page:p, index: idx}; } return null; }
 
     function nextEmptySlotFrom(start){
       var p = start && typeof start.page==='number' ? start.page : 0;
@@ -2531,7 +2476,7 @@
       // Positions hold the page object, not its number, so removing a page mid-run can't send cards
       // to the wrong page. replaceAt must name a real cell; from may sit just past a page's last cell.
       function hold(pos, maxIndex){
-        return (pos && pages[pos.page] && pos.index >= 0 && pos.index <= maxIndex) ? { model: pages[pos.page], index: pos.index } : null;
+        return (pos && pages[pos.page] && Number.isInteger(pos.index) && pos.index >= 0 && pos.index <= maxIndex) ? { model: pages[pos.page], index: pos.index } : null;
       }
       function locate(pos){
         const p = pos ? pages.indexOf(pos.model) : -1;
@@ -2572,101 +2517,30 @@
       return ' (pages ' + (contiguous ? nums[0] + '–' + nums[nums.length - 1] : nums.join(', ')) + ')';
     }
 
-    function createPlacementState(opts){
-      const allowOverwrite = !!(opts && opts.allowOverwrite);
-      let startPage = (opts && typeof opts.startPage === 'number') ? opts.startPage : currentPage;
-      if(!pages.length){
-        startPage = 0;
-      } else {
-        if(startPage < 0) startPage = 0;
-        if(startPage >= pages.length) startPage = pages.length - 1;
-      }
-
-      let preferred = opts && opts.preferredSlot ? opts.preferredSlot : null;
-      if(preferred){
-        const hasModel = pages[preferred.page] && pages[preferred.page].items;
-        const isValid = hasModel && (pages[preferred.page].items[preferred.index] == null || allowOverwrite);
-        if(!isValid){ preferred = null; }
-      }
-
-      // Where the next search starts once something has been placed. Slots are found when a card
-      // is ready to place, never ahead of time: reserving one eagerly added an empty page (a blank
-      // printed sheet) whenever the last card filled a page.
-      let searchFrom = null;
-
-      function claimSlot(){
-        let target;
-        if (preferred) target = preferred;
-        else if (searchFrom) target = nextEmptySlotFrom(searchFrom) || appendPageSlot();
-        else target = nextEmptySlot(startPage) || appendPageSlot();
-        let committed = false;
-        return {
-          target,
-          commit(){
-            if(committed) return;
-            committed = true;
-            if (preferred){
-              preferred = null;
-              searchFrom = { page: target.page, index: 0 };
-            } else {
-              searchFrom = { page: target.page, index: target.index + 1 };
-            }
-          }
-        };
-      }
-
-      return { claimSlot };
+    // Anchors for createPlacement: a cell to put the first card in, or a page to fill first.
+    function cellAnchor(model, index){
+      const p = pages.indexOf(model);
+      return p === -1 ? null : { replaceAt: { page: p, index: index } };
     }
 
-    async function handleFilesIntoCell(model, targetIdx, fileList){
+    function pageAnchor(pageIdx){
+      return (typeof pageIdx === 'number' && pageIdx >= 0 && pageIdx < pages.length) ? { from: { page: pageIdx, index: 0 } } : null;
+    }
+
+    // Adds image files through `placement` (default: next free cells from page 1). Returns how
+    // many were placed; placement.pagesUsed says where.
+    async function handleFiles(fileList, placement){
       const files = filterImageFiles(fileList);
       if(!files.length) return 0;
-      const pageIdx = pages.indexOf(model);
-      if(pageIdx === -1) return 0;
       await imageStoreReady;
+      placement = placement || createPlacement();
       let placed = 0;
-      // The first image replaces the target cell; the rest fill forward, finding each slot only
-      // when its image is ready (see createPlacementState).
-      let searchFrom = null;
       await processImageFilesInBatches(files, async (_, dataUrl) => {
-        const currentPos = searchFrom
-          ? (nextEmptySlotFrom(searchFrom) || appendPageSlot())
-          : { page: pageIdx, index: targetIdx };
-        const m = pages[currentPos.page];
-        if(!m) return;
         try{
           const item = await createStoredItemFromDataUrl(dataUrl);
           if(!item) return;
-          placeImage(m, currentPos.index, item);
+          placement.put(item);
           placed++;
-          searchFrom = { page: currentPos.page, index: currentPos.index + 1 };
-        }catch(err){
-          console.error('Failed to store dropped image', err);
-        }
-      });
-      return placed;
-    }
-
-    async function handleFiles(fileList, opts){
-      const files = filterImageFiles(fileList);
-      if(!files.length) return 0;
-
-      await imageStoreReady;
-      const placement = createPlacementState(opts || null);
-
-      let placed = 0;
-      await processImageFilesInBatches(files, async (_, dataUrl) => {
-        const slot = placement.claimSlot();
-        if(!slot) return;
-        const target = slot.target;
-        const m = pages[target.page];
-        if(!m) return;
-        try{
-          const item = await createStoredItemFromDataUrl(dataUrl);
-          if(!item) return;
-          placeImage(m, target.index, item);
-          placed++;
-          slot.commit();
         }catch(err){
           console.error('Failed to store added image', err);
         }
@@ -2674,33 +2548,23 @@
       return placed;
     }
 
-    async function handleImageUrls(urlList, opts){
+    async function handleImageUrls(urlList, placement){
       const urls = Array.from(urlList || []).map(function(u){
         return typeof u === 'string' ? u.trim() : '';
       }).filter(isProbablyImageUrl);
       if(!urls.length) return 0;
-
-      const placement = createPlacementState(opts || null);
+      placement = placement || createPlacement();
       let placed = 0;
-
       for (const src of urls){
-        if(!src) continue;
         try{
           const item = await createItemFromSrc(src);
           if(!item) continue;
-          const slot = placement.claimSlot();
-          if(!slot) continue;
-          const target = slot.target;
-          const m = pages[target.page];
-          if(!m) continue;
-          placeImage(m, target.index, item);
+          placement.put(item);
           placed++;
-          slot.commit();
         }catch(err){
           console.error('Failed to handle image URL', err);
         }
       }
-
       return placed;
     }
 
@@ -3579,14 +3443,15 @@
       const placement = createPlacement();
       for (const entry of toAdd){
         // A placed back face has no further face to add.
-        await addImageSrcToNextCell(entry.backUrl, { name: entry.name, back: null }, placement);
+        if (!await addImageSrcToNextCell(entry.backUrl, { name: entry.name, back: null }, placement)) continue;
         placed++;
         setStatus('(' + placed + '/' + toAdd.length + ') Adding DFC backs…');
         if (placed % 16 === 0){
           await yieldToEventLoop(pause);
         }
       }
-      setStatus('Added ' + toAdd.length + ' DFC back face(s)' + describePlacedPages(placement.pagesUsed) + failureNote);
+      const unplacedNote = placed < toAdd.length ? ' (' + (toAdd.length - placed) + ' couldn\'t be placed)' : '';
+      setStatus('Added ' + placed + ' DFC back face(s)' + describePlacedPages(placement.pagesUsed) + unplacedNote + failureNote);
       showPage(currentPage);
     }
 
