@@ -4468,6 +4468,76 @@
       setTuneBusy(null);
     });
 
+    /* ===== Deck panel =====
+       Rows group the layout's cards: one per card name (Scryfall), one per original upload (copies
+       made by + or duplicate join it through `copyOf`), one per linked image. Order is first
+       appearance in reading order. */
+    function scryfallIdOf(item){
+      const m = item && item.type === 'url' && item.url ? SCRYFALL_FRONT_IMAGE_RE.exec(item.url) : null;
+      return m ? m[1].toLowerCase() : null;
+    }
+
+    function hostOf(url){
+      try { return new URL(url).host || 'another site'; } catch(_){ return 'another site'; }
+    }
+
+    const SCRYFALL_BACK_IMAGE_RE = /^https:\/\/cards\.scryfall\.io\/[a-z_]+\/back\//i;
+
+    // The row a card belongs to. `backNames` maps placed DFCs' back-face URLs to the card's name.
+    // Back faces are recognised before names: "Add missing DFC backs" gives them the front's name,
+    // and they must not join (and disable ⇄ for) the front's row.
+    function deckGroupOf(item, backNames){
+      if (item.type === 'stored') return { key: 'upload:' + (item.copyOf || item.key), kind: 'upload', label: '' };
+      const backOf = backNames.get(imageUrlKey(item.url)) || (SCRYFALL_BACK_IMAGE_RE.test(item.url) ? (item.name || 'a double-faced card') : null);
+      if (backOf) return { key: 'back:' + foldName(backOf), kind: 'back', label: 'Back face of ' + backOf };
+      if (item.name) return { key: 'card:' + foldName(item.name), kind: 'card', label: item.name };
+      const id = scryfallIdOf(item);
+      if (id) return { key: 'id:' + id, kind: 'card', label: 'Scryfall card', needsName: true };
+      return { key: 'link:' + imageUrlKey(item.url), kind: 'link', label: 'Image from ' + hostOf(item.url) };
+    }
+
+    function deckRows(){
+      const total = totalPositions();
+      const backNames = new Map();
+      for (let p = 0; p < total; p++){
+        const it = itemAtPos(p);
+        if (it && it.type === 'url' && typeof it.back === 'string' && it.back) backNames.set(imageUrlKey(it.back), it.name || 'a double-faced card');
+      }
+      const rows = new Map();
+      let uploads = 0;
+      for (let p = 0; p < total; p++){
+        const it = itemAtPos(p);
+        if (!it) continue;
+        const g = deckGroupOf(it, backNames);
+        let row = rows.get(g.key);
+        if (!row){
+          row = { key: g.key, kind: g.kind, label: g.kind === 'upload' ? 'Your image ' + (++uploads) : g.label,
+                  needsName: !!g.needsName, positions: [], items: [], dfc: false };
+          rows.set(g.key, row);
+        }
+        row.positions.push(p);
+        row.items.push(it);
+        if (typeof it.back === 'string' && it.back) row.dfc = true;
+      }
+      return Array.from(rows.values()).map(function(row){
+        row.count = row.positions.length;
+        row.arts = new Set(row.items.map(function(it){ return it.type === 'url' ? imageUrlKey(it.url) : (it.copyOf || it.key); })).size;
+        row.canPickArt = row.kind === 'card' && !row.needsName && row.items.every(function(it){ return !!scryfallIdOf(it); });
+        return row;
+      });
+    }
+
+    function deckTotals(){
+      let cards = 0;
+      pages.forEach(function(m){ m.items.forEach(function(it){ if (it) cards++; }); });
+      return { cards: cards, pages: pages.length };
+    }
+
+    function deckTotalsText(){
+      const t = deckTotals();
+      return countOf(t.cards, 'card', 'cards') + ' · ' + countOf(t.pages, 'page', 'pages');
+    }
+
     /* ===== Export / Import ===== */
     var exportBtn = document.getElementById('exportBtn');
     var importFileInput = document.getElementById('importFileInput');
