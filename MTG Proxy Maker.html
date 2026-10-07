@@ -5169,10 +5169,15 @@
     }
 
     /* ===== Add tokens =====
-       Tokens and emblems the layout's cards make (Scryfall all_parts), each with a quantity. */
+       Tokens and emblems the layout's cards make (Scryfall all_parts), each with a quantity.
+       `tokensSession` belongs to one opening of the dialog and is cleared when it closes (Cancel, Esc,
+       backdrop): an Add that is still waiting on Scryfall then places nothing, and one that is placing
+       stops at its next card. The dialog can't reopen while an Add is still running. */
     var tokensModal = null;
     var tokensFound = [];
+    var tokensSession = null;
     var tokensLooking = false;
+    var tokensAdding = false;
 
     // A quantity box's text as a count: whole numbers 0-99; anything else is 0.
     function tokenQuantity(value){
@@ -5249,11 +5254,18 @@
       setupModalBackdrop(tokensModal);
       tokensModal.querySelector('#tokensCancelBtn').addEventListener('click', function(){ closeModal(tokensModal); });
       tokensModal.querySelector('#tokensAddBtn').addEventListener('click', addChosenTokens);
+      tokensModal.addEventListener('modalclose', function(){ tokensSession = null; });
+      // Enter in a quantity box presses Add (there is no multi-line field here).
+      tokensModal.addEventListener('keydown', function(e){
+        if (e.key !== 'Enter' || e.isComposing || !e.target || e.target.tagName !== 'INPUT') return;
+        e.preventDefault();
+        tokensModal.querySelector('#tokensAddBtn').click();
+      });
       return tokensModal;
     }
 
     async function openTokensDialog(){
-      if (tokensLooking) return;
+      if (tokensLooking || tokensAdding) return;
       tokensLooking = true;
       const btn = document.getElementById('deckTokensBtn');
       if (btn) btn.disabled = true;
@@ -5273,18 +5285,19 @@
           li.className = 'token-row';
           const name = document.createElement('span'); name.className = 'token-name'; name.id = 'tokenName' + i;
           name.textContent = t.name + (t.inLayout ? ' (already in layout)' : '');
-          const meta = document.createElement('span'); meta.className = 'token-meta';
+          const meta = document.createElement('span'); meta.className = 'token-meta'; meta.id = 'tokenMeta' + i;
           meta.textContent = t.typeLine + ' · made by ' + t.makers.join(', ');
           const qty = document.createElement('input');
           qty.type = 'number'; qty.min = '0'; qty.max = '99'; qty.step = '1';
           qty.value = t.inLayout ? '0' : '1';
-          qty.setAttribute('aria-labelledby', name.id);
+          qty.setAttribute('aria-labelledby', name.id + ' ' + meta.id);
           li.append(name, meta, qty);
           list.appendChild(li);
         });
         modal.querySelector('#tokensNote').textContent = found.failed ? countOf(found.failed, 'card', 'cards') + ' couldn\'t be checked (Scryfall unavailable).' : '';
         modal.querySelector('#tokensAddBtn').disabled = false;
         setStatus('Ready');
+        tokensSession = {};
         openModal(modal);
       }catch(err){
         console.error('Token lookup failed', err);
@@ -5296,42 +5309,64 @@
     }
 
     // Adds the chosen tokens (a fresh Scryfall lookup of each, for its images) in the dialog's order.
-    // placeImage saves the layout after each card. The Add button stays disabled until it's done, so
-    // a double click can't add twice.
+    // placeImage saves the layout after each card, so a large add pauses every 16 cards to keep the
+    // page responsive. The Add button and the panel button stay disabled until it is done, so it can't
+    // run twice; closing the dialog meanwhile ends it (cards already placed stay).
     async function addChosenTokens(){
       const addBtn = tokensModal.querySelector('#tokensAddBtn');
-      if (addBtn.disabled) return;
+      const session = tokensSession;
+      if (!session || tokensAdding || addBtn.disabled) return;
       const wanted = [];
       Array.from(tokensModal.querySelectorAll('.token-row input')).forEach(function(input, i){
         const n = tokenQuantity(input.value);
         if (n > 0) wanted.push({ token: tokensFound[i], count: n });
       });
       if (!wanted.length){ closeModal(tokensModal); setStatus('No tokens added'); return; }
+      const live = function(){ return tokensSession === session; };
+      const panelBtn = document.getElementById('deckTokensBtn');
+      tokensAdding = true;
       addBtn.disabled = true;
+      if (panelBtn) panelBtn.disabled = true;
       tokensModal.querySelector('#tokensNote').textContent = 'Adding tokens…';
       try{
         const cards = new Map();
         const ids = wanted.map(function(w){ return w.token.id; });
-        for (let i = 0; i < ids.length; i += 75){
+        for (let i = 0; i < ids.length && live(); i += 75){
           const chunk = ids.slice(i, i + 75);
-          (await postCollection(chunk.map(function(id){ return { id: id }; }))).forEach(function(c){ cards.set(String(c.id).toLowerCase(), c); });
+          const found = await postCollection(chunk.map(function(id){ return { id: id }; }));
+          found.forEach(function(c){ cards.set(String(c.id).toLowerCase(), c); });
         }
+        if (!live()){ setStatus('No tokens added'); return; }
+        const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
         const placement = createPlacement();
-        let added = 0, missing = 0;
-        wanted.forEach(function(w){
+        let added = 0, missing = 0, sincePause = 0, stopped = false;
+        for (const w of wanted){
           const images = makeCardImages(cards.get(w.token.id));
-          if (!images.front){ missing += w.count; return; }
-          for (let k = 0; k < w.count; k++){ placement.put(createUrlItem(images.front, images)); added++; }
-        });
+          if (!images.front){ missing += w.count; continue; }
+          for (let k = 0; k < w.count; k++){
+            if (!live()){ stopped = true; break; }
+            placement.put(createUrlItem(images.front, images)); added++;
+            if (++sincePause >= 16){ sincePause = 0; await yieldToEventLoop(pause); }
+          }
+          if (stopped) break;
+        }
+        if (stopped){
+          setStatus(added ? 'Added ' + countOf(added, 'token', 'tokens') + ' before the dialog was closed' + describePlacedPages(placement.pagesUsed) : 'No tokens added');
+          return;
+        }
         closeModal(tokensModal);
         setStatus(added
           ? 'Added ' + countOf(added, 'token', 'tokens') + (missing ? ' (' + missing + ' couldn\'t be found)' : '') + describePlacedPages(placement.pagesUsed)
           : 'Couldn\'t find the chosen tokens on Scryfall');
       }catch(err){
         console.warn('Adding tokens failed', err);
-        tokensModal.querySelector('#tokensNote').textContent = 'Couldn\'t add tokens (Scryfall unavailable — try again shortly).';
-        setStatus('Couldn\'t add tokens');
-      }finally{ addBtn.disabled = false; }
+        if (live()) tokensModal.querySelector('#tokensNote').textContent = 'Couldn\'t add tokens (Scryfall unavailable — try again shortly).';
+        setStatus(live() ? 'Couldn\'t add tokens' : 'No tokens added');
+      }finally{
+        tokensAdding = false;
+        addBtn.disabled = false;
+        if (panelBtn) panelBtn.disabled = false;
+      }
     }
 
     const deckTokensBtn = document.getElementById('deckTokensBtn');

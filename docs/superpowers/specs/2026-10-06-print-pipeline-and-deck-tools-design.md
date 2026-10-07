@@ -358,8 +358,9 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
 
 - Collect distinct Scryfall cards in the layout via the card ID in their image URLs; look them up
   in batches of 75 (`cards/collection` by id) through the queue.
-- From each card's `all_parts`, take entries with `component: "token"` (Scryfall uses this for
-  tokens and emblems), excluding the card itself. De-duplicate by name + type line.
+- From each card's `all_parts`, take parts with `component: "token"`, or whose type line starts with
+  "Token" or "Emblem" (Scryfall files emblems as `combo_piece`), excluding the card itself.
+  De-duplicate by name + type line.
 - A token whose name matches a card already in the layout is listed as "already in layout" with
   quantity 0.
 - Dialog: one row per token — name, type line, "made by Card A, Card B", quantity (default 1;
