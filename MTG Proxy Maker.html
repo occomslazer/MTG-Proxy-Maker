@@ -395,21 +395,23 @@
 
     .tune-layout { display: flex; gap: 16px; align-items: flex-start; }
     .tune-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-    .tune-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 14px; }
+    .tune-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 12px; font-size: 14px; }
     .seg { display: inline-flex; border: 1px solid #9ca3af; border-radius: 8px; overflow: hidden; }
     .seg label { position: relative; padding: 5px 10px; font-size: 13px; cursor: pointer; user-select: none; }
     .seg label + label { border-left: 1px solid #d1d5db; }
     .seg input { position: absolute; opacity: 0; pointer-events: none; }
     .seg label:has(input:checked) { background: #2563eb; color: #fff; }
     .seg label:has(input:disabled) { opacity: .45; cursor: default; }
-    .seg label:has(input:focus-visible) { outline: 2px solid #2563eb; outline-offset: -2px; }
+    .seg:has(input:focus-visible) { outline: 2px solid #2563eb; outline-offset: 2px; }
     .fine-tuning summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 4px 0; }
     .fine-tuning .warning { margin-bottom: 8px; }
     .tune-preview { position: relative; width: 150px; flex: none; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.25); border-radius: 2px; overflow: hidden; }
     .tune-preview .tp-card { position: absolute; background: #374151; box-shadow: inset 0 0 0 0.5px #9ca3af; }
     .tune-preview .tp-bleed { position: absolute; background: #111827; }
     .tune-preview .tp-mark { position: absolute; background: #e11d48; min-width: 1px; min-height: 1px; }
+    .tune-preview.bad { outline: 2px solid #dc2626; outline-offset: 2px; }
     :root[data-theme="dark"] .seg label + label { border-left-color: #374151; }
+    @media (max-width: 720px){ .tune-layout { flex-direction: column; align-items: stretch; } }
     @media (forced-colors: active){
       .seg label:has(input:checked) { background: Highlight; color: HighlightText; forced-color-adjust: none; }
       .seg label:has(input:disabled) { opacity: 1; color: GrayText; }
@@ -1168,14 +1170,32 @@
 
     /* ===== Modal focus management (trap + restore) ===== */
     let lastFocus = null;
-    function trapFocus(m){
+    // The modal's tab stops, in order. Rebuilt on every Tab, since sections open and controls enable
+    // while the modal is open. A radio group is one stop: its checked radio, else its first enabled one.
+    function tabStops(m){
       const sel='button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])';
-      const f=[...m.querySelectorAll(sel)].filter(el=>!el.disabled && el.offsetParent!==null);
-      if(!f.length) return;
-      f[0].focus();
+      const all=[...m.querySelectorAll(sel)].filter(el=>!el.disabled && el.offsetParent!==null);
+      const groups=new Set();
+      return all.filter(function(el){
+        if(el.type!=='radio' || !el.name) return true;
+        if(groups.has(el.name)) return false;
+        groups.add(el.name);
+        return true;
+      }).map(function(el){
+        if(el.type!=='radio' || !el.name) return el;
+        return all.find(r=>r.type==='radio' && r.name===el.name && r.checked) || el;
+      });
+    }
+    function trapFocus(m){
+      const first=tabStops(m);
+      if(!first.length) return;
+      first[0].focus();
       function onKey(e){
         if(e.key!=='Tab') return;
-        const i=f.indexOf(document.activeElement);
+        const f=tabStops(m);
+        if(!f.length) return;
+        const a=document.activeElement;
+        const i=f.findIndex(el=>el===a || (a && a.type==='radio' && a.name && el.type==='radio' && el.name===a.name));
         if(e.shiftKey && i<=0){ e.preventDefault(); f[f.length-1].focus(); }
         else if(!e.shiftKey && i===f.length-1){ e.preventDefault(); f[0].focus(); }
       }
@@ -1678,8 +1698,12 @@
       el.style.height = inch(box.h);
     }
 
+    // The saved image fit mode ('cover' or 'contain'). Pages draw with this, never with the dialog's
+    // select, so an unsaved choice can't reach the printout.
+    var savedFitMode = 'cover';
+
     // Everything that changes how a page is drawn: layout settings plus the image fit mode.
-    function layoutKey(){ return JSON.stringify(currentLayoutSettings()) + '|' + (fitModeSelect ? fitModeSelect.value : ''); }
+    function layoutKey(){ return JSON.stringify(currentLayoutSettings()) + '|' + savedFitMode; }
 
     // Applies the current layout everywhere: paper size (screen and print dialog), every page's grid,
     // cells and cut marks. Returns the layout.
@@ -2190,7 +2214,7 @@
 
     /* ===== Rendering ===== */
     function fitImage(el){
-      var fit = fitModeSelect.value;
+      var fit = savedFitMode;
       var nw = el.naturalWidth||el.width||1; var nh = el.naturalHeight||el.height||1;
       const { cellW, cellH } = cellSizePx();
       var d = computeFitDims(nw, nh, cellW, cellH, fit);
@@ -4264,12 +4288,22 @@
       return m ? parseFloat(m[1]) : (fallback||0);
     }
 
+    const DEFAULT_TUNING = { topIn: 0.25, leftIn: 0, cardWIn: 2.4750, cardHIn: 3.4650 };
+
+    // Printer tuning exactly as applied: margins to 0.01 in, card size to 0.0001 in. Validate this,
+    // not the raw entry, so what passes is what prints. Non-numbers stay NaN.
+    function roundTuning(topIn, leftIn, cardWIn, cardHIn){
+      return { topIn: +Number(topIn).toFixed(2), leftIn: +Number(leftIn).toFixed(2), cardWIn: +Number(cardWIn).toFixed(4), cardHIn: +Number(cardHIn).toFixed(4) };
+    }
+
     function applyTuning(topIn, leftIn, cardWIn, cardHIn){
       // sanitize
       topIn   = Math.max(0, Number(topIn)  || 0);
       leftIn  = Number(leftIn) || 0;
       cardWIn = Number(cardWIn) || readInchesVar('--cell-w', BASE_W_IN);
       cardHIn = Number(cardHIn) || readInchesVar('--cell-h', BASE_H_IN);
+      const r = roundTuning(topIn, leftIn, cardWIn, cardHIn);
+      topIn = r.topIn; leftIn = r.leftIn; cardWIn = r.cardWIn; cardHIn = r.cardHIn;
 
       // apply CSS custom properties (in inches so cellSizePx() stays exact)
       document.documentElement.style.setProperty('--grid-top', topIn.toFixed(2)+'in');
@@ -4297,14 +4331,17 @@
       try{
         loadPrintSettings();
         var raw = localStorage.getItem('mtgTuning');
+        var t = raw ? (JSON.parse(raw) || {}) : {};
+        savedFitMode = t.fitMode === 'contain' ? 'contain' : 'cover';
         if(raw){
-          var t = JSON.parse(raw)||{};
           var hasGeometry = ['topIn','leftIn','cardWIn','cardHIn'].some(function(k){ return typeof t[k] !== 'undefined'; });
           if (hasGeometry){
             var top  = (typeof t.topIn   !== 'undefined') ? Number(t.topIn)   : readInchesVar('--grid-top', .25);
             var left = (typeof t.leftIn  !== 'undefined') ? Number(t.leftIn)  : readInchesVar('--grid-left', 0);
             var w    = (typeof t.cardWIn !== 'undefined') ? Number(t.cardWIn) : readInchesVar('--cell-w', 2.4750);
             var h    = (typeof t.cardHIn !== 'undefined') ? Number(t.cardHIn) : readInchesVar('--cell-h', 3.4650);
+            var g    = roundTuning(top, left, w, h);
+            top = g.topIn; left = g.leftIn; w = g.cardWIn; h = g.cardHIn;
             // Saved by an older version or carried in by an imported file
             var problem = tuningProblem(top, left, w, h);
             if (problem){
@@ -4315,7 +4352,7 @@
               } else {
                 console.warn('Ignoring saved printer tuning: ' + problem);
                 setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
-                top = 0.25; left = 0; w = 2.4750; h = 3.4650;
+                top = DEFAULT_TUNING.topIn; left = DEFAULT_TUNING.leftIn; w = DEFAULT_TUNING.cardWIn; h = DEFAULT_TUNING.cardHIn;
               }
             }
             applyTuning(top, left, w, h);
@@ -4328,11 +4365,9 @@
           if (tuneScaleLock){
             tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
           }
-          if (fitModeSelect && t.fitMode){
-            fitModeSelect.value = t.fitMode;
-          }
         }
       }catch(_){}
+      if (fitModeSelect) fitModeSelect.value = savedFitMode;
       // Print settings can change above without a tuning change (which would redraw); redraw to match.
       applyLayout();
     }
@@ -4349,20 +4384,19 @@
       if (r) r.checked = true;
     }
 
-    // The settings as currently entered in the dialog (not yet saved).
+    // The settings as currently entered in the dialog (not yet saved), rounded as they'd be applied.
     function readTuneDraft(){
       let w = parseFloat(tuneCardWIn.value), h = parseFloat(tuneCardHIn.value);
       if (tuneScaleLock && tuneScaleLock.checked){
-        if (isFinite(w) && w > 0) h = +(w / BASE_W_IN * BASE_H_IN).toFixed(4);
-        else if (isFinite(h) && h > 0) w = +(h / BASE_H_IN * BASE_W_IN).toFixed(4);
+        if (isFinite(w) && w > 0) h = w / BASE_W_IN * BASE_H_IN;
+        else if (isFinite(h) && h > 0) w = h / BASE_H_IN * BASE_W_IN;
       }
       return Object.assign(currentLayoutSettings(), {
         paper: tuneRadio('paper') ? tuneRadio('paper').value : printSettings.paper,
         gapMm: Number(tuneRadio('gap') ? tuneRadio('gap').value : printSettings.gapMm),
         bleedMm: Number(tuneRadio('bleed') ? tuneRadio('bleed').value : printSettings.bleedMm),
-        cutStyle: tuneRadio('cutStyle') ? tuneRadio('cutStyle').value : printSettings.cutStyle,
-        topIn: parseFloat(tuneTopIn.value), leftIn: parseFloat(tuneLeftIn.value), cardWIn: w, cardHIn: h
-      });
+        cutStyle: tuneRadio('cutStyle') ? tuneRadio('cutStyle').value : printSettings.cutStyle
+      }, roundTuning(parseFloat(tuneTopIn.value), parseFloat(tuneLeftIn.value), w, h));
     }
 
     // Corners need a gap; with no gap, switch a Corners choice to Ticks.
@@ -4374,12 +4408,14 @@
       document.getElementById('cutStyleHint').hidden = !noGap;
     }
 
-    // Mini sheet preview of the draft settings.
+    // Mini sheet preview of the draft settings, outlined red when the draft can't be saved.
+    // With a field that isn't a number, the last drawing stays (marked bad).
     function renderTunePreview(){
       const box = document.getElementById('tunePreview');
       const draft = readTuneDraft();
-      if (![draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn].every(isFinite)) return;
+      if (![draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn].every(isFinite)){ box.classList.add('bad'); return; }
       const L = computeLayout(draft);
+      box.classList.toggle('bad', !!L.problem);
       const scale = box.clientWidth / L.page.w;
       box.style.height = (L.page.h * scale) + 'px';
       box.innerHTML = '';
@@ -4404,6 +4440,7 @@
       setTuneRadio('bleed', String(printSettings.bleedMm));
       setTuneRadio('cutStyle', printSettings.cutStyle);
       tuneModal.querySelector('details.fine-tuning').open = false;
+      if (fitModeSelect) fitModeSelect.value = savedFitMode;
 
       try{
         const t = JSON.parse(localStorage.getItem('mtgTuning') || '{}');
@@ -4429,6 +4466,8 @@
     if (saveTuneBtn){
       saveTuneBtn.addEventListener('click', function(){
         const draft = readTuneDraft();
+        if (isFinite(draft.topIn)) tuneTopIn.value = draft.topIn.toFixed(2);
+        if (isFinite(draft.leftIn)) tuneLeftIn.value = draft.leftIn.toFixed(2);
         if (isFinite(draft.cardWIn)) tuneCardWIn.value = draft.cardWIn.toFixed(4);
         if (isFinite(draft.cardHIn)) tuneCardHIn.value = draft.cardHIn.toFixed(4);
         const tuneError = document.getElementById('tuneError');
@@ -4436,10 +4475,15 @@
         if (problem){
           tuneError.textContent = problem;
           tuneError.hidden = false;
+          // A fine-tuning field is to blame (the draft fits with default tuning): show those fields.
+          if (!computeLayout(Object.assign({}, draft, DEFAULT_TUNING)).problem){
+            tuneModal.querySelector('details.fine-tuning').open = true;
+          }
           return;
         }
         tuneError.hidden = true;
 
+        savedFitMode = (fitModeSelect && fitModeSelect.value === 'contain') ? 'contain' : 'cover';
         savePrintSettings({ paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle });
         applyTuning(draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn);
 
@@ -4447,7 +4491,7 @@
         try{
           const prev = JSON.parse(localStorage.getItem('mtgTuning') || '{}');
           prev.scaleLock = !!(tuneScaleLock && tuneScaleLock.checked);
-          prev.fitMode = fitModeSelect ? fitModeSelect.value : 'cover';
+          prev.fitMode = savedFitMode;
           localStorage.setItem('mtgTuning', JSON.stringify(prev));
         }catch(_){}
 
@@ -4457,10 +4501,10 @@
 
     if (resetTuneBtn){
       resetTuneBtn.addEventListener('click', function(){
-        tuneTopIn.value   = '0.25';
-        tuneLeftIn.value  = '0.00';
-        tuneCardWIn.value = '2.4750';
-        tuneCardHIn.value = '3.4650';
+        tuneTopIn.value   = DEFAULT_TUNING.topIn.toFixed(2);
+        tuneLeftIn.value  = DEFAULT_TUNING.leftIn.toFixed(2);
+        tuneCardWIn.value = DEFAULT_TUNING.cardWIn.toFixed(4);
+        tuneCardHIn.value = DEFAULT_TUNING.cardHIn.toFixed(4);
         if (tuneScaleLock) tuneScaleLock.checked = true;
         setTuneRadio('gap', '0');
         setTuneRadio('bleed', '0');
