@@ -1173,8 +1173,18 @@
     // The modal's tab stops, in order. Rebuilt on every Tab, since sections open and controls enable
     // while the modal is open. A radio group is one stop: its checked radio, else its first enabled one.
     function tabStops(m){
-      const sel='button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])';
-      const all=[...m.querySelectorAll(sel)].filter(el=>!el.disabled && el.offsetParent!==null);
+      const sel='button,[href],input,select,textarea,summary,[tabindex]:not([tabindex="-1"])';
+      // A summary is a tab stop only as its <details>' own toggle (the first summary child).
+      const isToggle=el=>el.tagName!=='SUMMARY' || (el.parentElement && el.parentElement.tagName==='DETAILS' && el.parentElement.querySelector(':scope > summary')===el);
+      // Content of a closed <details> keeps its layout box in Chrome (offsetParent is set) but can't be reached.
+      const inClosedDetails=function(el){
+        for(let d=el.parentElement && el.parentElement.closest('details:not([open])'); d; d=d.parentElement && d.parentElement.closest('details:not([open])')){
+          const s=d.querySelector(':scope > summary');
+          if(!s || !s.contains(el)) return true;
+        }
+        return false;
+      };
+      const all=[...m.querySelectorAll(sel)].filter(el=>!el.disabled && el.offsetParent!==null && isToggle(el) && !inClosedDetails(el));
       const groups=new Set();
       return all.filter(function(el){
         if(el.type!=='radio' || !el.name) return true;
