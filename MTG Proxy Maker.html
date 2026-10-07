@@ -2106,6 +2106,17 @@
         .finally(reset);
     });
 
+    // A replace target only applies to the dialog it opened. Cancelling that dialog fires no
+    // change event, so clear it on cancel, and when "Add Images" itself is clicked. (Opening the
+    // dialog for a replace calls fileInput.click(), which bubbles to the label with the input as
+    // target, so only clicks on the label itself clear it.)
+    fileInput.addEventListener('cancel', function(){ targetIndexForFile = null; });
+    if (fileInput.parentElement){
+      fileInput.parentElement.addEventListener('click', function(e){
+        if (e.target !== fileInput) targetIndexForFile = null;
+      });
+    }
+
     ['dragenter','dragover'].forEach(function(evt){
       pageWrap.addEventListener(evt, function(e){
         const dt = e.dataTransfer;
