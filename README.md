@@ -9,20 +9,21 @@ A single-file HTML app that pulls card images from [Scryfall](https://scryfall.c
 - **Double-faced cards** — automatically add missing DFC back faces
 - **Drag & drop** — rearrange cards between cells, or drop image files directly onto the grid
 - **Multiple pages** — add as many pages as you need; all pages print at once. New cards fill the first empty cell, and **Remove gaps** closes up empty cells left by deleting cards
-- **Print-ready layout** — Letter or A4 pages with precise card sizing and optional cut marks
+- **Print-ready layout** — Letter or A4 pages with precise card sizing, optional gaps, bleed and cut lines
+- **Double-sided printing** — card backs (the default or your own) printed behind each page, lined up for a long-edge flip
 - **Printer calibration** — fine-tune margins, card dimensions, and image fit mode (cover/contain)
 - **Dark mode** — toggle between light and dark themes
-- **Export / Import** — save and restore deck layouts as `.mtgproxy` files (full or lightweight)
+- **Export / Import** — save and restore deck layouts as `.mtgproxy` files (full or lightweight), or export a print-ready PDF
 - **PWA support** — install as a standalone app; previously fetched cards work offline
 - **Print preview** — see all pages as they will appear on paper before printing
 
 ## Getting Started
 
-1. Open `MTG Proxy Maker.html` in any modern browser (Chrome, Firefox, Edge, Safari).
+1. Keep `card-back.jpg` and the `vendor/` folder next to `MTG Proxy Maker.html`, then open it in any modern browser (Chrome, Firefox, Edge, Safari).
 2. Search for a card by name or paste a decklist.
 3. Arrange cards as needed, then click **Print** (or press `P`).
 
-No build step, no dependencies, no server required.
+No build step and no server required. Opened as a file, everything works except that a PDF export can't read the default card back: upload a card back in Print settings, or serve the folder (for example `python -m http.server`) and open it from there.
 
 ## Keyboard Shortcuts
 
@@ -60,6 +61,10 @@ Cards default to 2.475″ × 3.465″ (99% of the standard 2.5″ × 3.5″). Pr
 - **Gap between cards** — 0–3 mm
 - **Bleed** — 0–3 mm of border colour around each card, so slightly-off cuts don't show white
 - **Cut lines** — Ticks (short marks in the margin), Full lines (for trimmers) or Corners (needs a gap)
+- **Double-sided printing** — a back page after each page (see below)
+- **Card back** — the default image, or **Upload…** your own; **Use default** goes back to the default
+
+Nothing changes until you click **Save**; **Close** or Esc discards your changes. **Reset** returns gap, bleed, cut lines, margins, card size and back offsets to their defaults.
 
 Cut lines print only when the **Cut marks** switch is on (or press **M**).
 
@@ -68,12 +73,23 @@ If prints appear clipped or misaligned, open **Printer fine-tuning** in the same
 1. Adjust top margin, horizontal offset, or card dimensions
 2. Leave **Keep 2.5×3.5 ratio** on to maintain the aspect ratio
 3. Choose **Cover** (fill cell, may crop edges) or **Contain** (fit inside, may show margins)
+4. With double-sided printing, use **Back offset X / Y** to line the backs up with the fronts
+
+## Double-sided Printing
+
+1. Turn on **Double-sided printing** in Print settings and click **Save**.
+2. Print with the app's **Print** button (or `P`), not Ctrl+P: it waits for back images that are still loading, which Ctrl+P can't.
+3. In the print dialog, choose two-sided printing and flip on the **long edge**.
+4. If the backs sit off the fronts, adjust **Back offset X / Y** under Printer fine-tuning.
+
+**Double-faced cards:** when you turn double-sided printing on with double-faced cards in the layout, the app asks whether to print their back faces on the reverse instead of the card back. If you say yes and the back faces are also placed as separate cards, it offers to remove those so they don't print twice.
 
 ## Export & Import
 
 - **Export (Full)** — saves layout + card images as base64 in a `.mtgproxy` file. Larger file, works fully offline.
 - **Export (Lightweight)** — saves layout + Scryfall URLs only. Small file, re-fetches images on import.
-- **Import** — open a `.mtgproxy` file to restore a saved layout.
+- **Export → PDF (ready to print)** — a PDF at the exact page size, with back pages when double-sided printing is on. Choose **High-quality JPEG** (smaller file) or **Original PNG** (exact pixels, larger file). Print it at **Actual size / 100%**, not "Fit to page".
+- **Import** — open a `.mtgproxy` file to restore a saved layout. If its print settings differ from yours, you're asked whether to **Keep mine** or **Use the file's**.
 
 ## Browser Compatibility
 

@@ -52,8 +52,8 @@ must keep working; every other feature here is secondary to it. Concretely:
 | 2 | Bleed is a setting: Off (default) / 1 / 2 / 3 mm, filled with the card's border colour. |
 | 3 | Paper: Letter and A4 only, always 3 × 3. Rotation gains nothing on either; larger paper is parked. |
 | 4 | Cut-line styles: Ticks (today, default), Full lines, Corners. |
-| 5 | All print settings live in the existing Advanced dialog (Help → Advanced). No new toolbar entry; paper defaults from the browser's region. |
-| 6 | The "Cut marks" control stays in the controls bar as the on/off switch (and `M` key); Advanced picks the style. |
+| 5 | All print settings live in the Print settings dialog (Help → Print settings). No new toolbar entry; paper defaults from the browser's region. |
+| 6 | The "Cut marks" control stays in the controls bar as the on/off switch (and `M` key); Print settings picks the style. |
 | 7 | Every checkbox in the app becomes a toggle switch. |
 | 8 | Default card back: the user-supplied image (trimmed, see "Card back asset"). Players can upload their own. |
 | 9 | Turning on double-sided printing with double-faced cards in the layout prompts whether to print DFC back faces on the reverse; if yes and back faces are also placed as separate cards, it offers to remove them. |
@@ -85,7 +85,7 @@ sites use it.
 
 ## 1. Settings and controls
 
-The Advanced dialog becomes the home of every print setting. Contents, top to bottom:
+The Print settings dialog (Help → Print settings) is the home of every print setting. Contents, top to bottom:
 
 | Setting | Options | Default |
 |---|---|---|
