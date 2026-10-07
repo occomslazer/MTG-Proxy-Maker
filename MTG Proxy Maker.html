@@ -424,12 +424,22 @@
     .tune-fields { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
     .tune-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 12px; font-size: 14px; }
     .seg { display: inline-flex; border: 1px solid #9ca3af; border-radius: 8px; overflow: hidden; }
-    .seg label { position: relative; padding: 5px 10px; font-size: 13px; cursor: pointer; user-select: none; }
-    .seg label + label { border-left: 1px solid #d1d5db; }
+    /* Each option is <label><input type="radio"><span>Text</span></label>: the hidden radio styles
+       its span, which works without :has(). */
+    .seg label { position: relative; display: flex; cursor: pointer; user-select: none; }
+    .seg span { padding: 5px 10px; font-size: 13px; }
+    .seg label + label > span { border-left: 1px solid #d1d5db; }
     .seg input { position: absolute; opacity: 0; pointer-events: none; }
-    .seg label:has(input:checked) { background: #2563eb; color: #fff; }
-    .seg label:has(input:disabled) { opacity: .45; cursor: default; }
-    .seg:has(input:focus-visible) { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .seg input:checked + span { background: #2563eb; color: #fff; }
+    .seg input:disabled + span { opacity: .45; cursor: default; }
+    /* Keyboard focus: a ring inside the focused option; where :has() works, around the whole group
+       instead. */
+    .seg input:focus-visible + span { outline: 2px solid #2563eb; outline-offset: -2px; }
+    .seg input:checked:focus-visible + span { outline-color: #fff; }
+    @supports selector(:has(*)){
+      .seg input:focus-visible + span { outline: none; }
+      .seg:has(input:focus-visible) { outline: 2px solid #2563eb; outline-offset: 2px; }
+    }
     .fine-tuning summary { cursor: pointer; font-weight: 600; font-size: 14px; margin: 4px 0; }
     .fine-tuning .warning { margin-bottom: 8px; }
     .tune-preview { position: relative; width: 150px; flex: none; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.25); border-radius: 2px; overflow: hidden; }
@@ -440,11 +450,12 @@
     .back-image-controls { display: flex; align-items: center; gap: 8px; }
     .back-image-controls img { width: 36px; height: 50px; object-fit: cover; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
     .back-image-controls button { padding: 5px 10px; font-size: 13px; }
-    :root[data-theme="dark"] .seg label + label { border-left-color: #374151; }
+    :root[data-theme="dark"] .seg label + label > span { border-left-color: #374151; }
     @media (max-width: 720px){ .tune-layout { flex-direction: column; align-items: stretch; } }
     @media (forced-colors: active){
-      .seg label:has(input:checked) { background: Highlight; color: HighlightText; forced-color-adjust: none; }
-      .seg label:has(input:disabled) { opacity: 1; color: GrayText; }
+      .seg input:checked + span { background: Highlight; color: HighlightText; forced-color-adjust: none; }
+      .seg input:disabled + span { opacity: 1; color: GrayText; }
+      .seg input:checked:focus-visible + span { outline-color: HighlightText; }
       /* The mini sheet is a picture of the printout: keep its own colours. */
       .tune-preview { forced-color-adjust: none; }
     }
@@ -574,31 +585,31 @@
         <div class="tune-fields">
           <div class="tune-row"><span>Paper</span>
             <div class="seg" role="radiogroup" aria-label="Paper">
-              <label><input type="radio" name="paper" value="letter">Letter</label>
-              <label><input type="radio" name="paper" value="a4">A4</label>
+              <label><input type="radio" name="paper" value="letter"><span>Letter</span></label>
+              <label><input type="radio" name="paper" value="a4"><span>A4</span></label>
             </div>
           </div>
           <div class="tune-row"><span>Gap between cards</span>
             <div class="seg" role="radiogroup" aria-label="Gap between cards">
-              <label><input type="radio" name="gap" value="0">0</label>
-              <label><input type="radio" name="gap" value="1">1 mm</label>
-              <label><input type="radio" name="gap" value="2">2 mm</label>
-              <label><input type="radio" name="gap" value="3">3 mm</label>
+              <label><input type="radio" name="gap" value="0"><span>0</span></label>
+              <label><input type="radio" name="gap" value="1"><span>1 mm</span></label>
+              <label><input type="radio" name="gap" value="2"><span>2 mm</span></label>
+              <label><input type="radio" name="gap" value="3"><span>3 mm</span></label>
             </div>
           </div>
           <div class="tune-row"><span title="Extra border colour around each card so slightly-off cuts don't show white">Bleed</span>
             <div class="seg" role="radiogroup" aria-label="Bleed">
-              <label><input type="radio" name="bleed" value="0">Off</label>
-              <label><input type="radio" name="bleed" value="1">1 mm</label>
-              <label><input type="radio" name="bleed" value="2">2 mm</label>
-              <label><input type="radio" name="bleed" value="3">3 mm</label>
+              <label><input type="radio" name="bleed" value="0"><span>Off</span></label>
+              <label><input type="radio" name="bleed" value="1"><span>1 mm</span></label>
+              <label><input type="radio" name="bleed" value="2"><span>2 mm</span></label>
+              <label><input type="radio" name="bleed" value="3"><span>3 mm</span></label>
             </div>
           </div>
           <div class="tune-row"><span>Cut lines</span>
             <div class="seg" role="radiogroup" aria-label="Cut-line style">
-              <label title="Short marks in the page margin"><input type="radio" name="cutStyle" value="ticks">Ticks</label>
-              <label title="Lines across the sheet through gaps and margins — for trimmers"><input type="radio" name="cutStyle" value="full">Full lines</label>
-              <label title="L-marks at each card's corners — needs a gap"><input type="radio" name="cutStyle" value="corners">Corners</label>
+              <label title="Short marks in the page margin"><input type="radio" name="cutStyle" value="ticks"><span>Ticks</span></label>
+              <label title="Lines across the sheet through gaps and margins — for trimmers"><input type="radio" name="cutStyle" value="full"><span>Full lines</span></label>
+              <label title="L-marks at each card's corners — needs a gap"><input type="radio" name="cutStyle" value="corners"><span>Corners</span></label>
             </div>
           </div>
           <p class="footnote" id="cutStyleHint" hidden>Corners need a gap between cards.</p>
@@ -1637,12 +1648,9 @@
 
     // Saves the given print settings only, merged into what is saved now: another tab may have changed
     // other settings (or replaced the card back) since this one loaded them, and this tab's older copy
-    // must not write them back. This tab's settings then follow the merged result, and its pages too:
-    // if that changed the layout (say another tab picked A4), fronts, the print dialog's paper size and
-    // back pages are laid out again; other changes (double-sided, card back) redraw the back pages.
+    // must not write them back. This tab's settings then follow the merged result (followPrintSettings).
     // Pass `deferLayout` when the caller lays everything out straight after anyway.
     function savePrintSettings(patch, deferLayout){
-      const before = JSON.stringify(printSettings), beforeLayout = layoutKey();
       const saved = readSavedTuning();
       // Nothing saved yet (or storage unavailable): start from the settings in effect.
       const merged = Object.assign({}, saved || printSettings, patch || {});
@@ -1651,7 +1659,25 @@
       // Corners need a gap; with none they'd draw nothing, so fall back to Ticks.
       if (merged.cutStyle === 'corners' && !(printSettingsFrom(merged).gapMm > 0)) merged.cutStyle = 'ticks';
       try{ localStorage.setItem('mtgTuning', JSON.stringify(merged)); }catch(_){}
-      printSettings = printSettingsFrom(merged);
+      followPrintSettings(merged, deferLayout);
+    }
+
+    // Adopts the print settings saved now (another tab may have changed them), validated as when they
+    // load, without writing anything. Nothing saved (or storage unavailable): the settings in effect stay.
+    function reloadPrintSettings(){
+      const saved = readSavedTuning();
+      if (saved) followPrintSettings(saved);
+    }
+
+    // This tab's settings become those in a saved tuning object (validated), and its pages follow: if
+    // that changed the layout (say another tab picked A4), fronts, the print dialog's paper size and
+    // back pages are laid out again; other changes (double-sided, card back) redraw the back pages.
+    function followPrintSettings(t, deferLayout){
+      const before = JSON.stringify(printSettings), beforeLayout = layoutKey();
+      const s = printSettingsFrom(t);
+      // The paper in effect is kept when none is saved (a first visit's region default).
+      if (!Object.prototype.hasOwnProperty.call(PAPER_SIZES, t.paper)) s.paper = printSettings.paper;
+      printSettings = s;
       if (deferLayout) return;
       // applyLayout schedules the back pages; their sync can save again (resolveBackImage), but only
       // when the saved settings differ from these, so this settles after one round.
@@ -4063,7 +4089,7 @@
                 savePrintSettings({ backImageKey: null });
                 setStatus('Your uploaded card back wasn\'t available; using the default back');
               } else {
-                savePrintSettings({});   // another tab replaced it: pick up the saved one
+                reloadPrintSettings();   // another tab replaced it: pick up the saved one
               }
             }
           }
@@ -4772,10 +4798,20 @@
     function unreadableAsFile(url){ return isFileProtocol() && !/^(https?|blob|data):/i.test(url); }
 
     // Everything that decides what the PDF draws, read once as it starts, so a change while it builds
-    // (the M key, Print settings) can't give it pages of two kinds.
+    // (the M key, Print settings) can't give it pages of two kinds. `backKey` is the card back
+    // (an upload's storage key, or null for the default).
     function pdfSnapshot(layout){
       return { layout: layout, fit: savedFitMode, cutMarks: !!(toggleCutMarks && toggleCutMarks.checked),
-               duplex: !!printSettings.duplex, dfcOnBack: printSettings.dfcOnBack };
+               duplex: !!printSettings.duplex, dfcOnBack: printSettings.dfcOnBack, backKey: printSettings.backImageKey || null };
+    }
+
+    // The snapshot's card back as the back pages show it (resolveBackImage): the upload, or the default
+    // when there is none or it is no longer stored.
+    async function pdfCardBack(snap){
+      if (snap.backKey){
+        try{ const url = await imageStore.getUrl(snap.backKey); if (url) return { key: snap.backKey, url: url }; }catch(_){}
+      }
+      return { key: null, url: DEFAULT_BACK_URL };
     }
 
     // Where a card's image comes from: `id` names the image (its storage key or URL; each image is
@@ -4786,17 +4822,15 @@
       return { id: 'url:' + (item.url || ''), url: item.url || null, color: color };
     }
 
-    // What prints behind a card, decided as backSrcFor() does but with the snapshot's DFC choice: its
-    // back face, the default card back or an uploaded one. Opened as a file, the default back can't be
-    // read (`fileBack`).
-    function pdfBackSource(item, snap){
-      const src = (snap.dfcOnBack === true && item.type === 'url' && typeof item.back === 'string' && item.back) ? item.back : backImageUrl;
-      if (!src) return null;
+    // What prints behind a card, decided as backSrcFor() does but from the snapshot: its back face when
+    // the snapshot prints DFC backs, else the card back (`back`, from pdfCardBack). Opened as a file,
+    // the default back can't be read (`fileBack`).
+    function pdfBackSource(item, snap, back){
+      const face = (snap.dfcOnBack === true && item.type === 'url' && typeof item.back === 'string' && item.back) ? item.back : null;
+      const src = face || back.url;
       let color = null;
       try{ color = borderColorCache.get(new URL(src, document.baseURI).href) || null; }catch(_){}
-      if (src === backImageUrl && src !== DEFAULT_BACK_URL && printSettings.backImageKey){
-        return { id: 'stored:' + printSettings.backImageKey, key: printSettings.backImageKey, mime: null, color: color };
-      }
+      if (!face && back.key) return { id: 'stored:' + back.key, key: back.key, mime: null, color: color };
       return { id: 'url:' + src, url: src, color: color, fileBack: src === DEFAULT_BACK_URL && isFileProtocol() };
     }
 
@@ -4810,6 +4844,7 @@
           console.warn('Back pages may be incomplete', err);
         });
       }
+      const cardBack = snap.duplex ? await pdfCardBack(snap) : null;
       const sheets = [];
       pages.forEach(function(model){
         const front = [];
@@ -4817,7 +4852,7 @@
         sheets.push({ back: false, cells: front });
         if (!snap.duplex) return;
         const back = [];
-        for (let i = 0; i < CELLS_PER_PAGE; i++) back.push(model.items[i] ? pdfBackSource(model.items[i], snap) : null);
+        for (let i = 0; i < CELLS_PER_PAGE; i++) back.push(model.items[i] ? pdfBackSource(model.items[i], snap, cardBack) : null);
         sheets.push({ back: true, cells: back });
       });
       return sheets;
@@ -5448,9 +5483,9 @@
     // layout has some, so ask, as Save does when turning it on. The import has happened, so closing
     // the first question means "No". Resolves with a note for the import's status.
     async function askImportedDfcQuestions(){
-      // Decide on the saved settings (another tab may have changed them): re-read and validated as
-      // savePrintSettings does with no change, re-laying out if they differ from this tab's.
-      savePrintSettings({});
+      // Decide on the saved settings (another tab may have changed them), re-laying out if they differ
+      // from this tab's.
+      reloadPrintSettings();
       if (!printSettings.duplex || printSettings.dfcOnBack !== null) return '';
       setStatus('Checking double-faced cards…');
       const failed = await lookUpCardFaces(placedUrlItems());
