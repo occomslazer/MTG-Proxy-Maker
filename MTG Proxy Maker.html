@@ -120,6 +120,20 @@
     .page.has-bleed .bleed-box.filled { display: block; }
     .page.has-bleed .cell.filled { border-radius: 0; background: var(--bleed-color, #000); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 
+    /* Back pages (double-sided printing) exist only while it's on, and show only in print preview and
+       when printing. Back cells look like front cells; bleed works the same way (.bleed-box above). */
+    .page.back-page { display: none; }
+    .back-cell { position: absolute; box-sizing: border-box; overflow: hidden; border-radius: 8px; contain: layout paint size; }
+    .back-cell img { position: absolute; max-width: none; image-rendering: auto; }
+    .page.back-page.has-bleed .back-cell { border-radius: 0; background: var(--bleed-color, #000); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .back-label { display: none; }
+    @media screen{
+      /* The label sits above the sheet, so the back page must not clip to its own box in preview. */
+      .preview-mode .page.back-page { contain: none; content-visibility: visible; }
+      .preview-mode .back-label { display: block; position: absolute; left: 0; bottom: 100%; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #4b5563; }
+      :root[data-theme="dark"] .preview-mode .back-label { color: #cbd5e1; }
+    }
+
     .cell:focus-visible::after{
       opacity:1;
       box-shadow:
@@ -410,6 +424,9 @@
     .tune-preview .tp-bleed { position: absolute; background: #111827; }
     .tune-preview .tp-mark { position: absolute; background: #e11d48; min-width: 1px; min-height: 1px; }
     .tune-preview.bad { outline: 2px solid #dc2626; outline-offset: 2px; }
+    .back-image-controls { display: flex; align-items: center; gap: 8px; }
+    .back-image-controls img { width: 36px; height: 50px; object-fit: cover; border-radius: 3px; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+    .back-image-controls button { padding: 5px 10px; font-size: 13px; }
     :root[data-theme="dark"] .seg label + label { border-left-color: #374151; }
     @media (max-width: 720px){ .tune-layout { flex-direction: column; align-items: stretch; } }
     @media (forced-colors: active){
@@ -563,6 +580,17 @@
             </div>
           </div>
           <p class="footnote" id="cutStyleHint" hidden>Corners need a gap between cards.</p>
+          <div class="tune-row"><span id="duplexLabel" title="Prints a back page after each page; flip the sheet on the long edge">Double-sided printing</span>
+            <input id="duplexToggle" type="checkbox" aria-labelledby="duplexLabel" />
+          </div>
+          <div class="tune-row"><span id="backImageLabel">Card back</span>
+            <div class="back-image-controls">
+              <img id="backImageThumb" alt="Card back in use" />
+              <button id="backImageUpload" class="secondary" aria-label="Upload a card back image">Upload…</button>
+              <button id="backImageReset" class="secondary" aria-label="Reset the card back to the default">Reset</button>
+              <input id="backImageInput" type="file" accept="image/*" hidden />
+            </div>
+          </div>
 
           <details class="fine-tuning">
             <summary>Printer fine-tuning</summary>
@@ -595,6 +623,14 @@
                 <input id="tuneScaleLock" type="checkbox" checked />
                 Keep 2.5×3.5 ratio
               </label>
+              <label class="field" style="grid-column: 1;" title="Moves the back side (double-sided printing) to line up with the front. Positive = right.">
+                Back offset X (in)
+                <input id="tuneBackX" type="number" step="0.01" value="0.00" style="width:120px">
+              </label>
+              <label class="field" title="Moves the back side (double-sided printing) to line up with the front. Positive = down.">
+                Back offset Y (in)
+                <input id="tuneBackY" type="number" step="0.01" value="0.00" style="width:120px">
+              </label>
             </div>
           </details>
         </div>
@@ -609,6 +645,14 @@
         <div class="right"></div>
         <button id="closeTuneBtn" class="secondary">Close</button>
       </div>
+    </div>
+  </div>
+
+  <!-- In-app question (askChoice); can open on top of another dialog -->
+  <div id="choiceModal" class="modal">
+    <div class="sheet" role="alertdialog" aria-modal="true" aria-labelledby="choiceText" style="width:min(520px,92vw)">
+      <p id="choiceText" style="margin:0;font-size:15px;line-height:1.5"></p>
+      <div id="choiceButtons" style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap"></div>
     </div>
   </div>
 
@@ -660,6 +704,9 @@
     var tuneCardWIn = document.getElementById('tuneCardWIn');
     var tuneCardHIn = document.getElementById('tuneCardHIn');
     var tuneScaleLock = document.getElementById('tuneScaleLock');
+    var tuneBackX = document.getElementById('tuneBackX');
+    var tuneBackY = document.getElementById('tuneBackY');
+    var duplexToggle = document.getElementById('duplexToggle');
 
     /* Ratio constants for scaling */
     const BASE_W_IN = 2.5;
@@ -1169,7 +1216,8 @@
     }
 
     /* ===== Modal focus management (trap + restore) ===== */
-    let lastFocus = null;
+    // Open dialogs in opening order (the last is on top), each with what had focus before it opened.
+    const modalStack = [];
     // The modal's tab stops, in order. Rebuilt on every Tab, since sections open and controls enable
     // while the modal is open. A radio group is one stop: its checked radio, else its first enabled one.
     function tabStops(m){
@@ -1214,14 +1262,30 @@
     }
     function openModal(m){
       ctxHide();
-      lastFocus = document.activeElement;
+      const at = modalStack.findIndex(e=>e.modal===m);
+      modalStack.push(at === -1 ? { modal: m, focus: document.activeElement } : modalStack.splice(at, 1)[0]);
       m.classList.add('open');
+      if(m.__trapHandler){ m.removeEventListener('keydown', m.__trapHandler); m.__trapHandler=null; }
       trapFocus(m);
     }
+    function topModal(){
+      for(let i=modalStack.length-1;i>=0;i--){ if(modalStack[i].modal.classList.contains('open')) return modalStack[i].modal; }
+      return null;
+    }
+    // Closes a dialog and returns focus to where it was before that dialog opened. Fires 'modalclose'
+    // on the dialog, however it was closed (button, Esc, backdrop), so it can discard unsaved state.
     function closeModal(m){
+      if(!m.classList.contains('open')) return;
       m.classList.remove('open');
       if(m.__trapHandler){ m.removeEventListener('keydown', m.__trapHandler); m.__trapHandler=null; }
-      if(lastFocus && typeof lastFocus.focus==='function'){ lastFocus.focus(); }
+      const at = modalStack.findIndex(e=>e.modal===m);
+      if(at !== -1){
+        const entry = modalStack.splice(at, 1)[0];
+        // A dialog opened from this one now returns focus to where this one would have.
+        if(at < modalStack.length) modalStack[at].focus = entry.focus;
+        else if(entry.focus && entry.focus.isConnected && typeof entry.focus.focus==='function') entry.focus.focus();
+      }
+      m.dispatchEvent(new Event('modalclose'));
     }
 
     function setupModalBackdrop(m){
@@ -1533,8 +1597,9 @@
       s.duplex = t.duplex === true;
       if (t.dfcOnBack === true || t.dfcOnBack === false) s.dfcOnBack = t.dfcOnBack;
       if (typeof t.backImageKey === 'string' && t.backImageKey) s.backImageKey = t.backImageKey;
-      if (typeof t.backOffsetXIn === 'number' && isFinite(t.backOffsetXIn)) s.backOffsetXIn = t.backOffsetXIn;
-      if (typeof t.backOffsetYIn === 'number' && isFinite(t.backOffsetYIn)) s.backOffsetYIn = t.backOffsetYIn;
+      // To 0.01 in, like the printer offsets and as the dialog saves them.
+      if (typeof t.backOffsetXIn === 'number' && isFinite(t.backOffsetXIn)) s.backOffsetXIn = +t.backOffsetXIn.toFixed(2);
+      if (typeof t.backOffsetYIn === 'number' && isFinite(t.backOffsetYIn)) s.backOffsetYIn = +t.backOffsetYIn.toFixed(2);
       printSettings = s;
       if (t.paper !== s.paper) savePrintSettings({});
       return s;
@@ -1665,7 +1730,8 @@
 
     // Why a layout can't be printed, in words, or '' when it fits on the page.
     function layoutProblem(s, page, grid, b, g){
-      if (![s.topIn, s.leftIn, s.cardWIn, s.cardHIn].every(isFinite)) return 'Enter a number in every field.';
+      if (![s.topIn, s.leftIn, s.cardWIn, s.cardHIn].every(isFinite) ||
+          ![s.backOffsetXIn, s.backOffsetYIn].every(function(v){ return v === undefined || isFinite(v); })) return 'Enter a number in every field.';
       if (s.cardWIn <= 0 || s.cardHIn <= 0) return 'Card width and height must be greater than zero.';
       if (s.topIn < 0) return 'Top margin can\'t be negative.';
       const fmt = function(v){ return String(Math.round(v * 100) / 100); };
@@ -1726,7 +1792,12 @@
       const rule = document.getElementById('pageSizeRule');
       const sizeText = '@page { size: ' + inch(layout.page.w) + ' ' + inch(layout.page.h) + '; margin: 0; }';
       if (rule && rule.textContent !== sizeText) rule.textContent = sizeText;
-      pages.forEach(function(model){ layoutPage(model, layout, key); });
+      pages.forEach(function(model){
+        layoutPage(model, layout, key);
+        if (model.backEl) layoutBackPage(model, layout, key);
+      });
+      // Back pages follow the layout here; adding/removing them and their images follows shortly.
+      scheduleBackPages();
       return layout;
     }
 
@@ -1854,6 +1925,12 @@
       return model;
     }
 
+    // Takes a page, and its back page if it has one, out of the document.
+    function removePageElements(model){
+      model.pageEl.remove();
+      if (model.backEl){ model.backEl.remove(); model.backEl = null; }
+    }
+
     function getCurrent(){ return pages[currentPage]; }
     function updatePager(){
       pageBadge.textContent = 'Page ' + (currentPage+1) + ' / ' + pages.length;
@@ -1872,6 +1949,8 @@
     window.addEventListener('beforeprint', () => {
       ctxHide();
       syncCutMarksState();
+      // Ctrl+P can't wait: back pages are kept in sync after every change, this catches the last one.
+      drawBackPages();
     });
     window.addEventListener('pageshow', () => {
       doUpdate();
@@ -2905,7 +2984,7 @@
       }
       var idx = currentPage;
       disposePageItems(m);
-      pageWrap.removeChild(m.pageEl);
+      removePageElements(m);
       pages.splice(idx, 1);
       showPage(Math.min(idx, pages.length - 1));
       saveState();
@@ -2947,10 +3026,18 @@
     clearBtn.addEventListener('click', clearCurrentPage);
     clearAllBtn.addEventListener('click', function(){ clearAllPages(true); });
 
+    // Back pages and their images must be ready before the print dialog snapshots the document; an
+    // image that never answers can't hold printing up for long.
+    function printWhenReady(){
+      Promise.race([syncBackPages(), new Promise(function(r){ setTimeout(r, 10000); })]).then(function(){
+        pages.forEach(p => p.pageEl.offsetHeight);
+        window.print();
+      });
+    }
+
     printBtn.addEventListener('click', function(){
       ctxHide();
-      pages.forEach(p => p.pageEl.offsetHeight);
-      window.print();
+      printWhenReady();
     });
 
     /* ===== Preview sizing (reads CSS page vars) ===== */
@@ -3816,7 +3903,7 @@
       }
       clearInternalClipboard();
       while (pages.length > plan.keepPages){
-        pages.pop().pageEl.remove();
+        removePageElements(pages.pop());
       }
       pages.forEach(function(m, p){
         m.items = new Array(CELLS_PER_PAGE).fill(null);
@@ -3882,11 +3969,331 @@
       setItemAtPos(q, null);
       const emptied = posToSlot(q).page;
       if (pages.length > 1 && emptied === pages.length - 1 && !pages[emptied].items.some(Boolean)){
-        pages.pop().pageEl.remove();
+        removePageElements(pages.pop());
       }
       showPage(Math.min(currentPage, pages.length - 1));   // also syncs cut marks and saves
       return true;
     }
+
+    /* ===== Double-sided printing =====
+       With it on, a back page follows each front page (print, preview and PDF), mirrored for a
+       long-edge flip. Back pages are hidden while editing. */
+    // `var`, not const/let: applyLayout() and saveState() schedule a back-page sync, and they can run
+    // before this part of the script has.
+    var DEFAULT_BACK_URL = 'card-back.jpg';
+    var backImageUrl = DEFAULT_BACK_URL;   // the saved card back, as resolved by resolveBackImage()
+    var backPagesTimer = null;
+
+    // Resolves the saved card back to a URL. A stored upload that has gone missing (e.g. a lightweight
+    // import from another machine) falls back to the default back.
+    async function resolveBackImage(){
+      for (;;){
+        const key = printSettings.backImageKey || null;
+        let url = DEFAULT_BACK_URL;
+        if (key){
+          try{
+            url = await imageStore.getUrl(key);
+            if (!url) throw new Error('Missing image data');
+          }catch(_){
+            url = DEFAULT_BACK_URL;
+            if ((printSettings.backImageKey || null) === key){
+              savePrintSettings({ backImageKey: null });
+              setStatus('Your uploaded card back wasn\'t available; using the default back');
+            }
+          }
+        }
+        // The setting may have changed while the image store answered; resolve the current one.
+        if ((printSettings.backImageKey || null) === key){ backImageUrl = url; return url; }
+      }
+    }
+
+    // What prints behind a card: its own back face when DFC backs go on the reverse, else the card back.
+    function backSrcFor(item){
+      if (!item) return null;
+      if (printSettings.dfcOnBack === true && item.type === 'url' && typeof item.back === 'string' && item.back) return item.back;
+      return backImageUrl;
+    }
+
+    function setBackBleedColor(bc, color){
+      bc.bleedBox.style.background = color || '';
+      if (color) bc.cell.style.setProperty('--bleed-color', color);
+      else bc.cell.style.removeProperty('--bleed-color');
+    }
+
+    // The back page that follows `model`'s page: a bleed box and a cell per card, like a front page
+    // (no cut marks).
+    function ensureBackPage(model){
+      if (model.backEl){
+        if (model.backEl.previousElementSibling !== model.pageEl) model.pageEl.after(model.backEl);
+        return model.backEl;
+      }
+      const back = document.createElement('div');
+      back.className = 'page back-page';
+      back.setAttribute('role', 'region');
+      const label = document.createElement('div'); label.className = 'back-label';
+      back.appendChild(label);
+      const backCells = [];
+      for (let i = 0; i < CELLS_PER_PAGE; i++){
+        const bleedBox = document.createElement('div'); bleedBox.className = 'bleed-box'; bleedBox.setAttribute('aria-hidden', 'true');
+        back.appendChild(bleedBox);
+        backCells.push({ bleedBox: bleedBox, src: null, size: null });
+      }
+      backCells.forEach(function(bc, i){
+        const cell = document.createElement('div'); cell.className = 'back-cell'; cell.dataset.index = i; cell.setAttribute('aria-hidden', 'true');
+        const img = document.createElement('img'); img.alt = ''; img.draggable = false;
+        img.onload = function(){ fitBackImage(bc); setBackBleedColor(bc, sampleBorderColor(img)); };
+        img.onerror = function(){ setBackBleedColor(bc, ''); };
+        cell.appendChild(img);
+        back.appendChild(cell);
+        bc.cell = cell; bc.img = img;
+      });
+      model.backEl = back; model.backCells = backCells; model.backLayoutKey = null;
+      model.pageEl.after(back);
+      return back;
+    }
+
+    // Places an element so it prints exactly at x, y, w, h (CSS pixels, in its containing block).
+    // When printing, Chrome snaps an untransformed box's edges to whole CSS pixels, and a transformed
+    // box's size; only the transform itself is exact. So the element is laid out at the corner at its
+    // size in whole pixels, and one transform moves it into place and scales it to the exact size.
+    // (Front pages keep the old layout's snapping so default prints stay pixel-identical. Backs are
+    // exact, so a back is never further from its front than that front's own rounding; drawn like the
+    // fronts, the two roundings could add up to a whole pixel.) Returns the laid-out size in pixels.
+    function placeExactPx(el, x, y, w, h){
+      const lw = Math.max(1, Math.round(w)), lh = Math.max(1, Math.round(h));
+      const n = function(v){ return Math.round(v * 1e6) / 1e6; };
+      el.style.left = '0px'; el.style.top = '0px';
+      el.style.width = lw + 'px'; el.style.height = lh + 'px';
+      el.style.transformOrigin = '0 0';
+      el.style.transform = 'translate(' + n(x) + 'px, ' + n(y) + 'px) scale(' + n(w / lw) + ', ' + n(h / lh) + ')';
+      return { w: lw, h: lh };
+    }
+
+    // The same for a box in inches from the page's top-left corner (1in is 96 CSS pixels).
+    function placeExactBox(el, box){ return placeExactPx(el, box.x * 96, box.y * 96, box.w * 96, box.h * 96); }
+
+    // Fits and centres a back image in its cell's laid-out size (image fit mode as on fronts), exactly
+    // too; the cell's own scale then brings both to the exact card size.
+    function fitBackImage(bc){
+      if (!bc.size || !bc.img.naturalWidth) return;
+      const d = computeFitDims(bc.img.naturalWidth, bc.img.naturalHeight, bc.size.w, bc.size.h, savedFitMode);
+      placeExactPx(bc.img, (bc.size.w - d.w) / 2, (bc.size.h - d.h) / 2, d.w, d.h);
+    }
+
+    // Positions a back page's cells and bleed boxes at the calculator's mirrored boxes (backCards).
+    function layoutBackPage(model, layout, key){
+      layout = layout || computeLayout();
+      key = key || layoutKey();
+      if (model.backLayoutKey === key) return;
+      model.backLayoutKey = key;
+      model.backEl.classList.toggle('has-bleed', layout.bleedIn > 0);
+      model.backCells.forEach(function(bc, i){
+        bc.size = placeExactBox(bc.cell, layout.backCards[i].trim);
+        placeExactBox(bc.bleedBox, layout.backCards[i].bleed);
+        fitBackImage(bc);
+      });
+    }
+
+    // Brings back pages up to date: one after each front page while double-sided printing is on (none
+    // when it's off), each cell showing what prints behind the card in front of it. Synchronous, so
+    // beforeprint (Ctrl+P) can call it; it uses the last resolved card back (see syncBackPages).
+    function drawBackPages(){
+      const layout = computeLayout(), key = layoutKey();
+      const live = new Set();
+      if (printSettings.duplex){
+        pages.forEach(function(model, pi){
+          const back = ensureBackPage(model);
+          live.add(back);
+          const label = 'Back of page ' + (pi + 1);
+          if (back.firstChild.textContent !== label){ back.firstChild.textContent = label; back.setAttribute('aria-label', label); }
+          layoutBackPage(model, layout, key);
+          model.backCells.forEach(function(bc, i){
+            const src = backSrcFor(model.items[i]);
+            bc.cell.style.display = src ? '' : 'none';
+            bc.bleedBox.classList.toggle('filled', !!src);
+            if (src && bc.src !== src){
+              bc.src = src;
+              bc.img.removeAttribute('crossorigin');
+              // Scryfall serves CORS, so the border colour can be read (and the service worker caches it).
+              if (/^https:\/\/cards\.scryfall\.io\//i.test(src)) bc.img.crossOrigin = 'anonymous';
+              bc.img.src = src;
+              setBackBleedColor(bc, borderColorCache.get(bc.img.src) || '');
+            }
+          });
+        });
+      }
+      pageWrap.querySelectorAll('.page.back-page').forEach(function(el){ if (!live.has(el)) el.remove(); });
+      pages.forEach(function(model){ if (model.backEl && !live.has(model.backEl)) model.backEl = null; });
+      refreshDfcButton();
+    }
+
+    // Resolves the card back, brings back pages up to date and waits for their images to load, so
+    // printing straight after shows every back.
+    async function syncBackPages(){
+      await resolveBackImage();
+      drawBackPages();
+      const loading = Array.from(pageWrap.querySelectorAll('.back-page img')).filter(function(img){ return img.getAttribute('src') && !img.complete; });
+      await Promise.all(loading.map(function(img){
+        return new Promise(function(r){ img.addEventListener('load', r, { once: true }); img.addEventListener('error', r, { once: true }); });
+      }));
+    }
+
+    // Called after every layout and card change (applyLayout, saveState): one sync once the current
+    // task is done, however many changes it made. A function declaration, so it works that early too.
+    function scheduleBackPages(){
+      clearTimeout(backPagesTimer);
+      backPagesTimer = setTimeout(function(){ syncBackPages(); }, 0);
+    }
+
+    function refreshDfcButton(){
+      if (!addDFCBacksBtn) return;
+      const onReverse = printSettings.duplex && printSettings.dfcOnBack === true;
+      addDFCBacksBtn.disabled = onReverse;
+      addDFCBacksBtn.title = onReverse
+        ? 'Double-faced cards print their back faces on the reverse (Print settings → Double-sided printing)'
+        : 'Scan placed cards and add any missing DFC back faces';
+    }
+
+    // In-app question with a button per answer; can open on top of another dialog. Resolves with the
+    // chosen button's value, or null when the question is closed without an answer (Esc, backdrop).
+    function askChoice(text, buttons){
+      const modal = document.getElementById('choiceModal');
+      if (modal.classList.contains('open')) closeModal(modal);
+      document.getElementById('choiceText').textContent = text;
+      const row = document.getElementById('choiceButtons'); row.innerHTML = '';
+      return new Promise(function(resolve){
+        let settled = false;
+        const settle = function(v){ if (!settled){ settled = true; resolve(v); } };
+        modal.addEventListener('modalclose', function(){ settle(null); }, { once: true });
+        buttons.forEach(function(b, i){
+          const btn = document.createElement('button');
+          btn.textContent = b.label;
+          if (i > 0) btn.className = 'secondary';
+          btn.addEventListener('click', function(){ settle(b.value); closeModal(modal); });
+          row.appendChild(btn);
+        });
+        openModal(modal);
+      });
+    }
+
+    // The questions for turning double-sided printing on. With double-faced cards in the layout, asks
+    // whether to print their back faces on the reverse and, if so, whether to remove back faces that
+    // were also placed as separate cards (they'd print twice). Resolves with null when the first
+    // question is closed without an answer, else { dfcOnBack, remove: [cards to remove] }; closing the
+    // second question keeps the cards.
+    async function askDuplexQuestions(){
+      const urlItems = [];
+      pages.forEach(function(m){ m.items.forEach(function(it){ if (it && it.type === 'url' && it.url) urlItems.push(it); }); });
+      await backfillCardFaces(urlItems);
+      const dfcs = urlItems.filter(function(it){ return typeof it.back === 'string' && it.back; });
+      if (!dfcs.length) return { dfcOnBack: printSettings.dfcOnBack, remove: [] };
+      const dfcOnBack = await askChoice(
+        'Print the back faces of your ' + dfcs.length + ' double-faced card' + (dfcs.length === 1 ? '' : 's') + ' on the reverse of their fronts?',
+        [{ label: 'Yes, print them on the back', value: true }, { label: 'No, use the card back', value: false }]);
+      if (dfcOnBack === null) return null;
+      if (!dfcOnBack) return { dfcOnBack: false, remove: [] };
+      const backKeys = new Set(dfcs.map(function(it){ return imageUrlKey(it.back); }));
+      const separate = urlItems.filter(function(it){ return backKeys.has(imageUrlKey(it.url)); });
+      let remove = [];
+      if (separate.length){
+        const n = separate.length;
+        const answer = await askChoice(
+          'Remove the ' + n + ' separately placed back face' + (n === 1 ? '' : 's') + '? ' + (n === 1 ? 'It' : 'They') + '\'d print twice.',
+          [{ label: 'Remove them', value: true }, { label: 'Keep them', value: false }]);
+        if (answer === true) remove = separate;
+      }
+      return { dfcOnBack: true, remove: remove };
+    }
+
+    // Ripple-removes these cards, from the last position back so the earlier positions stay put.
+    function rippleRemoveCards(cards){
+      const doomed = new Set(cards);
+      for (let p = totalPositions() - 1; p >= 0; p--){ if (doomed.has(itemAtPos(p))) rippleRemove(p); }
+    }
+
+    // Turns double-sided printing on or off and saves it; turning it on asks the questions above
+    // first. Resolves true when done, false when the first question was closed (nothing changes).
+    async function setDuplex(on){
+      if (!on){ savePrintSettings({ duplex: false }); await syncBackPages(); return true; }
+      const answers = await askDuplexQuestions();
+      if (!answers) return false;
+      savePrintSettings({ duplex: true, dfcOnBack: answers.dfcOnBack });
+      rippleRemoveCards(answers.remove);
+      saveState();
+      await syncBackPages();
+      return true;
+    }
+
+    // Saves `key` (null = the default back) as the card back, redraws the back pages, then deletes the
+    // upload it replaced.
+    async function commitBackImage(key){
+      const old = printSettings.backImageKey || null;
+      savePrintSettings({ backImageKey: key || null });
+      await resolveBackImage();
+      drawBackPages();
+      if (old && old !== key) await Promise.resolve(imageStore.delete(old)).catch(function(){});
+    }
+
+    // Stores an image file and uses it as the card back. Resolves false for a file that isn't an image.
+    async function setBackImageFile(file){
+      if (!file || !looksLikeImageFile(file)) return false;
+      const stored = await imageStore.storeBlob(file, file.type || null);
+      await commitBackImage(stored.key);
+      return true;
+    }
+
+    async function resetBackImage(){ await commitBackImage(null); }
+
+    /* Print settings dialog: the card back is a draft like everything else there. An upload is stored
+       straight away so it can be shown (tunePendingBackKey) and is deleted unless the dialog saves it. */
+    let tuneBackKey = null;          // the card back chosen in the dialog; null = the default
+    let tunePendingBackKey = null;   // an upload that is stored but not saved
+    let tuneSession = 0;             // bumped when the dialog closes, so a slow upload can't land late
+
+    function discardPendingBack(){
+      const key = tunePendingBackKey;
+      tunePendingBackKey = null;
+      return key ? Promise.resolve(imageStore.delete(key)).catch(function(){}) : Promise.resolve();
+    }
+
+    async function showTuneBackThumb(){
+      const key = tuneBackKey;
+      let url = DEFAULT_BACK_URL;
+      if (key){ try{ url = (await imageStore.getUrl(key)) || DEFAULT_BACK_URL; }catch(_){} }
+      if (tuneBackKey === key) document.getElementById('backImageThumb').src = url;
+    }
+
+    document.getElementById('backImageUpload').addEventListener('click', function(){ document.getElementById('backImageInput').click(); });
+    document.getElementById('backImageInput').addEventListener('change', async function(e){
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      const tuneError = document.getElementById('tuneError');
+      if (!looksLikeImageFile(file)){ tuneError.textContent = 'That file isn\'t an image.'; tuneError.hidden = false; return; }
+      const session = tuneSession;
+      let stored;
+      try{ stored = await imageStore.storeBlob(file, file.type || null); }
+      catch(err){
+        console.error('Failed to store the card back', err);
+        tuneError.textContent = 'Couldn\'t store that image.'; tuneError.hidden = false;
+        return;
+      }
+      if (session !== tuneSession || !tuneModal.classList.contains('open')){
+        Promise.resolve(imageStore.delete(stored.key)).catch(function(){});
+        return;
+      }
+      discardPendingBack();
+      tunePendingBackKey = stored.key;
+      tuneBackKey = stored.key;
+      showTuneBackThumb();
+    });
+    document.getElementById('backImageReset').addEventListener('click', function(){
+      discardPendingBack();
+      tuneBackKey = null;
+      showTuneBackThumb();
+    });
+    // Closing without saving (Close, Esc, backdrop) drops an unsaved upload.
+    tuneModal.addEventListener('modalclose', function(){ tuneSession++; discardPendingBack(); });
 
     /* ===== Export / Import ===== */
     var exportBtn = document.getElementById('exportBtn');
@@ -3994,6 +4401,16 @@
         pagesData.push(pageItems);
       }
 
+      // An uploaded card back travels with a full export.
+      if (mode === 'full' && printSettings.backImageKey && !imagesData[printSettings.backImageKey]){
+        try {
+          const blob = await imageStore.getBlob(printSettings.backImageKey);
+          imagesData[printSettings.backImageKey] = { mime: blob.type || 'image/png', data: await blobToBase64(blob) };
+        } catch(err){
+          console.warn('Failed to export the card back image', err);
+        }
+      }
+
       // Usually answered from the offline image cache; the image CDN has no rate limit.
       let done = 0;
       for (const url of scryfallUrls){
@@ -4089,7 +4506,8 @@
         return;
       }
 
-      // Own images embedded in a full export get fresh storage keys
+      // Own images embedded in a full export get fresh storage keys (the card back's too)
+      let importedBackKey = null;
       if (data.images){
         for (const [key, imgData] of Object.entries(data.images)){
           try {
@@ -4097,6 +4515,10 @@
             if (blob){
               const stored = await imageStore.storeBlob(blob, imgData.mime || null);
               remapImageKey(data.pages, key, stored.key);
+              if (data.tuning && typeof data.tuning === 'object' && data.tuning.backImageKey === key){
+                data.tuning.backImageKey = stored.key;
+                importedBackKey = stored.key;
+              }
             }
           } catch(err){
             console.warn('Failed to import image ' + key, err);
@@ -4162,13 +4584,7 @@
         renderGrid(m);
       });
 
-      // Restore tuning if present
-      if (data.tuning){
-        try {
-          localStorage.setItem('mtgTuning', JSON.stringify(data.tuning));
-          loadTuning();
-        } catch(_){}
-      }
+      if (data.tuning && typeof data.tuning === 'object') await importPrintSettings(data.tuning, importedBackKey, keptKeys);
 
       syncCutMarksState();
       showPage(Math.min(Math.max(0, data.current || 0), pages.length - 1));
@@ -4176,6 +4592,60 @@
       setStatus('Imported deck layout (' + pages.length + ' pages)' + (missingOwnImages
         ? ' — ' + missingOwnImages + ' of your own image(s) weren\'t in this file (lightweight exports leave them out)'
         : ''));
+    }
+
+    // True when two blobs hold the same bytes.
+    async function sameBytes(a, b){
+      if (!a || !b || a.size !== b.size) return false;
+      const x = new Uint8Array(await a.arrayBuffer()), y = new Uint8Array(await b.arrayBuffer());
+      for (let i = 0; i < x.length; i++){ if (x[i] !== y[i]) return false; }
+      return true;
+    }
+
+    // Print settings are printer-specific: an imported file's apply only if they match ours or the user
+    // agrees ("Keep mine" / "Use the file's"; closing the question keeps mine). `theirs` is the file's
+    // saved tuning, its card back already re-stored as importedBackKey when the file carried it.
+    async function importPrintSettings(theirs, importedBackKey, keptKeys){
+      const saved = readSavedTuning() || {};
+      // Our settings as they are in effect, so a field we never saved still compares by its value.
+      const mine = Object.assign({}, printSettings, {
+        topIn: readInchesVar('--grid-top', 0.25), leftIn: readInchesVar('--grid-left', 0),
+        cardWIn: readInchesVar('--cell-w', 2.475), cardHIn: readInchesVar('--cell-h', 3.465),
+        fitMode: savedFitMode, scaleLock: typeof saved.scaleLock === 'undefined' ? true : !!saved.scaleLock
+      });
+      const keys = ['paper','gapMm','bleedMm','cutStyle','duplex','dfcOnBack','backOffsetXIn','backOffsetYIn','topIn','leftIn','cardWIn','cardHIn','fitMode','scaleLock'];
+      const mineBack = printSettings.backImageKey || null;
+      // The file's card back: a file without the field leaves ours alone; one whose image isn't here
+      // (a lightweight export) would print the default back. The same image under another storage key
+      // (it is re-stored on import) is the same back.
+      let theirsBack = mineBack;
+      if (Object.prototype.hasOwnProperty.call(theirs, 'backImageKey')){
+        theirsBack = (typeof theirs.backImageKey === 'string' && theirs.backImageKey) ? theirs.backImageKey : null;
+        if (theirsBack && theirsBack !== mineBack){
+          const theirBlob = await imageStore.getBlob(theirsBack).catch(function(){ return null; });
+          const myBlob = (theirBlob && mineBack) ? await imageStore.getBlob(mineBack).catch(function(){ return null; }) : null;
+          if (!theirBlob) theirsBack = null;
+          else if (myBlob && await sameBytes(theirBlob, myBlob)) theirsBack = mineBack;
+        }
+      }
+      const differs = theirsBack !== mineBack || keys.some(function(k){
+        return typeof theirs[k] !== 'undefined' && JSON.stringify(theirs[k]) !== JSON.stringify(mine[k]);
+      });
+      const use = differs && await askChoice('This file has different print settings (paper, gaps, bleed, cut lines, double-sided printing, card back or printer tuning). Use them?',
+        [{ label: 'Keep mine', value: false }, { label: "Use the file's", value: true }]) === true;
+      if (use){
+        try {
+          // loadTuning() checks the result fits the page, as for any saved settings.
+          localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, saved, theirs, { backImageKey: theirsBack })));
+          loadTuning();
+        } catch(_){}
+      }
+      // Card back images nothing uses any more: the file's if we kept ours, ours if the file's replaced it.
+      const inUse = printSettings.backImageKey || null;
+      [importedBackKey, mineBack].forEach(function(key){
+        if (key && key !== inUse && !keptKeys.has(key)) Promise.resolve(imageStore.delete(key)).catch(function(){});
+      });
+      syncBackPages();
     }
 
     function remapImageKey(pagesData, oldKey, newKey){
@@ -4248,6 +4718,7 @@
       }catch(err){
         console.error('Failed to save state', err);
       }
+      scheduleBackPages();
     }
 
     async function loadState(){
@@ -4454,7 +4925,10 @@
         paper: tuneRadio('paper') ? tuneRadio('paper').value : printSettings.paper,
         gapMm: Number(tuneRadio('gap') ? tuneRadio('gap').value : printSettings.gapMm),
         bleedMm: Number(tuneRadio('bleed') ? tuneRadio('bleed').value : printSettings.bleedMm),
-        cutStyle: tuneRadio('cutStyle') ? tuneRadio('cutStyle').value : printSettings.cutStyle
+        cutStyle: tuneRadio('cutStyle') ? tuneRadio('cutStyle').value : printSettings.cutStyle,
+        // To 0.01 in, like the printer offsets.
+        backOffsetXIn: +parseFloat(tuneBackX.value).toFixed(2),
+        backOffsetYIn: +parseFloat(tuneBackY.value).toFixed(2)
       }, roundTuning(parseFloat(tuneTopIn.value), parseFloat(tuneLeftIn.value), w, h));
     }
 
@@ -4472,7 +4946,7 @@
     function renderTunePreview(){
       const box = document.getElementById('tunePreview');
       const draft = readTuneDraft();
-      if (![draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn].every(isFinite)){ box.classList.add('bad'); return; }
+      if (![draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn, draft.backOffsetXIn, draft.backOffsetYIn].every(isFinite)){ box.classList.add('bad'); return; }
       const L = computeLayout(draft);
       box.classList.toggle('bad', !!L.problem);
       const scale = box.clientWidth / L.page.w;
@@ -4498,6 +4972,11 @@
       setTuneRadio('gap', String(printSettings.gapMm));
       setTuneRadio('bleed', String(printSettings.bleedMm));
       setTuneRadio('cutStyle', printSettings.cutStyle);
+      duplexToggle.checked = !!printSettings.duplex;
+      tuneBackX.value = (printSettings.backOffsetXIn || 0).toFixed(2);
+      tuneBackY.value = (printSettings.backOffsetYIn || 0).toFixed(2);
+      tuneBackKey = printSettings.backImageKey || null;
+      showTuneBackThumb();
       tuneModal.querySelector('details.fine-tuning').open = false;
       if (fitModeSelect) fitModeSelect.value = savedFitMode;
 
@@ -4522,28 +5001,50 @@
 
     bindTuneButton();
 
+    // Set while Save waits for the double-faced card questions, so a second click doesn't start another.
+    let tuneSaving = false;
+
     if (saveTuneBtn){
-      saveTuneBtn.addEventListener('click', function(){
+      saveTuneBtn.addEventListener('click', async function(){
+        if (tuneSaving) return;
         const draft = readTuneDraft();
         if (isFinite(draft.topIn)) tuneTopIn.value = draft.topIn.toFixed(2);
         if (isFinite(draft.leftIn)) tuneLeftIn.value = draft.leftIn.toFixed(2);
         if (isFinite(draft.cardWIn)) tuneCardWIn.value = draft.cardWIn.toFixed(4);
         if (isFinite(draft.cardHIn)) tuneCardHIn.value = draft.cardHIn.toFixed(4);
+        if (isFinite(draft.backOffsetXIn)) tuneBackX.value = draft.backOffsetXIn.toFixed(2);
+        if (isFinite(draft.backOffsetYIn)) tuneBackY.value = draft.backOffsetYIn.toFixed(2);
         const tuneError = document.getElementById('tuneError');
         const problem = computeLayout(draft).problem;
         if (problem){
           tuneError.textContent = problem;
           tuneError.hidden = false;
-          // A fine-tuning field is to blame (the draft fits with default tuning): show those fields.
-          if (!computeLayout(Object.assign({}, draft, DEFAULT_TUNING)).problem){
+          // A fine-tuning field is to blame (the draft fits with default tuning and no back offsets):
+          // show those fields.
+          if (!computeLayout(Object.assign({}, draft, DEFAULT_TUNING, { backOffsetXIn: 0, backOffsetYIn: 0 })).problem){
             tuneModal.querySelector('details.fine-tuning').open = true;
           }
           return;
         }
         tuneError.hidden = true;
 
+        // Turning double-sided printing on asks about double-faced cards first (over this dialog).
+        // Closing that first question cancels the Save: nothing is saved and this dialog stays open.
+        const duplex = duplexToggle.checked;
+        let answers = null;
+        if (duplex && !printSettings.duplex){
+          tuneSaving = true;
+          try { answers = await askDuplexQuestions(); }
+          finally { tuneSaving = false; }
+          if (!answers || !tuneModal.classList.contains('open')) return;
+        }
+
         savedFitMode = (fitModeSelect && fitModeSelect.value === 'contain') ? 'contain' : 'cover';
-        savePrintSettings({ paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle });
+        const oldBack = printSettings.backImageKey || null, newBack = tuneBackKey;
+        tunePendingBackKey = null;   // saved now, so closing the dialog keeps it
+        savePrintSettings({ paper: draft.paper, gapMm: draft.gapMm, bleedMm: draft.bleedMm, cutStyle: draft.cutStyle,
+                            backOffsetXIn: draft.backOffsetXIn, backOffsetYIn: draft.backOffsetYIn,
+                            duplex: duplex, dfcOnBack: answers ? answers.dfcOnBack : printSettings.dfcOnBack, backImageKey: newBack });
         applyTuning(draft.topIn, draft.leftIn, draft.cardWIn, draft.cardHIn);
 
         // Persist scaleLock and fitMode merged with other tuning
@@ -4554,7 +5055,13 @@
           localStorage.setItem('mtgTuning', JSON.stringify(prev));
         }catch(_){}
 
+        if (answers) rippleRemoveCards(answers.remove);
         closeModal(tuneModal);
+        // Redraw the back pages with the saved card back before deleting the upload it replaced.
+        resolveBackImage().then(function(){
+          drawBackPages();
+          if (oldBack && oldBack !== newBack) Promise.resolve(imageStore.delete(oldBack)).catch(function(){});
+        });
       });
     }
 
@@ -4568,6 +5075,8 @@
         setTuneRadio('gap', '0');
         setTuneRadio('bleed', '0');
         setTuneRadio('cutStyle', 'ticks');
+        tuneBackX.value = '0.00';
+        tuneBackY.value = '0.00';
         refreshCutStyleChoices();
         renderTunePreview();
       });
@@ -4579,14 +5088,15 @@
       });
     }
 
-    /* Close any modal with Esc or by clicking the backdrop (restore focus) */
+    /* Close the topmost modal with Esc, or any modal by clicking its backdrop (restore focus) */
     document.addEventListener('keydown', function(e){
       if (e.key === 'Escape'){
-        var open = document.querySelector('.modal.open');
+        var open = topModal();
         if (open){ e.preventDefault(); closeModal(open); }
       }
     });
     setupModalBackdrop(tuneModal);
+    setupModalBackdrop(document.getElementById('choiceModal'));
 
     /* ===== Context Menu ===== */
     function ctxIsOpen(){ return !!(ctxMenu && ctxMenu.classList.contains('open')); }
@@ -4979,6 +5489,7 @@
       // Force all images to re-fit at full size
       pages.forEach(function(m){ m.gridEl.querySelectorAll('img').forEach(fitImage); });
       syncCutMarksState();
+      syncBackPages();
     }
 
     function exitPreview(){
@@ -4996,10 +5507,7 @@
       exitPreviewBtn.addEventListener('click', exitPreview);
     }
     if (previewPrintBtn){
-      previewPrintBtn.addEventListener('click', function(){
-        pages.forEach(function(p){ p.pageEl.offsetHeight; });
-        window.print();
-      });
+      previewPrintBtn.addEventListener('click', printWhenReady);
     }
 
     // Preview is read-only: swallow drops before the cell/page handlers see them. They must still
@@ -5040,6 +5548,7 @@
       doUpdate();
       loadTheme();
       loadTuning();
+      syncBackPages();
     })();
 
     // Expose for debugging

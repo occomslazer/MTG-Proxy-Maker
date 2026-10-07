@@ -99,6 +99,11 @@ The Advanced dialog becomes the home of every print setting. Contents, top to bo
 
 - A live mini preview of one sheet reflects the current settings.
 - Save validates that everything fits (see 2.3) and explains what doesn't, as today.
+- Nothing in the dialog takes effect until Save, double-sided printing, the card back and the back
+  offsets included; Close, Esc and the backdrop discard the draft (decided with the user). An
+  uploaded back is stored at once so it can be shown, and deleted again unless saved. Reset returns
+  gap, bleed, cut style, printer tuning and back offsets to their defaults; paper, double-sided and
+  the card back stay.
 - Gap and bleed are in millimetres; existing tuning fields stay in inches.
 - The controls-bar "Cut marks" switch toggles cut lines on/off in the chosen style.
 - All checkboxes (Show guides, Cut marks, decklist "Ignore basic lands" / "Ignore snow-covered
@@ -179,6 +184,10 @@ Thickness and colour as today.
   (applied to both trim and bleed boxes). Corrected during review: plain mirroring would have
   displaced the backs by twice the horizontal offset.
 - Back pages have no cut marks.
+- Back boxes print exactly at the calculator's positions: Chrome snaps untransformed boxes (and the
+  size of transformed ones) to whole CSS pixels when printing, so each back box is laid out at a
+  whole-pixel size and moved and scaled into place by a transform. Fronts keep today's snapping
+  (section 0.1), so a back is never further from its front than that front's own rounding.
 - Preview labels each back page "Back of page N".
 
 ### 3.2 What prints on the back
@@ -199,14 +208,18 @@ Thickness and colour as today.
 
 ### 3.4 DFC prompt
 
-When the double-sided toggle is switched on and the layout contains double-faced cards, an in-app
-dialog (not `window.confirm`/`prompt`) asks:
+When Save turns double-sided printing on (it was off) and the layout contains double-faced cards,
+an in-app dialog (not `window.confirm`/`prompt`) opens over the print-settings dialog and asks:
 
 1. "Print the back faces of your N double-faced cards on the reverse of their fronts?" Yes / No.
    The answer is saved and applies to DFCs added later.
 2. If Yes and back faces are also placed as separate cards (an item whose image is another placed
    card's stored back): "Remove the N separately placed back faces? They'd print twice." Removal
    uses ripple-remove (5.4).
+
+Closing the first question without an answer (Esc, backdrop) cancels the whole Save: nothing is
+saved, no cards are removed and the print-settings dialog stays open. Closing the second keeps the
+separately placed backs. Saving with double-sided printing already on asks nothing.
 
 While DFC backs print on the reverse, "Add missing DFC backs" is disabled with an explanatory
 tooltip.
@@ -324,6 +337,8 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
   (paper, gap, bleed, cut style, double-sided, back image, printer tuning), the app asks
   "Keep mine" / "Use the file's" (decided with the user: printer calibration is device-specific).
   Identical settings import silently. An imported back image that isn't used is discarded.
+  Card backs compare by image content (an imported back is stored under a new key), and closing the
+  question keeps mine.
 
 ## 7.2 Offline
 
