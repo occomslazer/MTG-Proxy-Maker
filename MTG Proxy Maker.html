@@ -68,7 +68,10 @@
     .panel{ background: white; border:1px solid #e5e7eb; border-radius:12px; padding:12px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
     .field{ display:flex; align-items:center; gap:8px; }
 
-    .status { font-size: 12px; color: #6b7280; margin-left: 8px; }
+    /* One line however long the message (the full text is its tooltip and what screen readers hear), so
+       the controls bar never grows and moves the page. It takes the rest of its row, but wraps to a row
+       of its own rather than shrink below 160px, where too little of a message would show. */
+    .status { font-size: 12px; color: #6b7280; margin-left: 8px; flex: 1 1 160px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     main { display: flex; align-items: flex-start; justify-content: center; overflow: hidden; box-sizing: border-box; min-height: 0; }
 
@@ -616,7 +619,6 @@
           <button id="deckBtn" class="secondary" aria-expanded="false" aria-controls="deckPanel" title="Show your deck: counts, copies, art and tokens">Deck</button>
         </div>
         <div class="status" id="status" role="status" aria-live="polite">Ready</div>
-        <div class="spacer"></div>
       </div>
     </div>
 
@@ -3256,6 +3258,9 @@
     document.addEventListener('visibilitychange', function(){ if(!document.hidden) debouncedUpdate(); });
     const ro = new ResizeObserver(()=>debouncedUpdate());
     ro.observe(document.documentElement);
+    // The page area is what the header and controls bar leave: re-fit when either changes height
+    // (their buttons wrap onto another row as the window narrows).
+    document.querySelectorAll('header, .controls').forEach(function(el){ ro.observe(el); });
 
     /* ===== Internal clipboard (C / X / V) for keyboard card moving ===== */
     let internalClipboard = null; // { mode: 'cut'|'copy', pageIndex, cellIndex, item }
@@ -6542,7 +6547,7 @@
 
     /* ===== Status & persistence ===== */
     let statusTimer = null;
-    function setStatus(msg){ clearTimeout(statusTimer); statusTimer = setTimeout(()=>{ statusEl.textContent = msg||'Ready'; }, 16); }
+    function setStatus(msg){ clearTimeout(statusTimer); statusTimer = setTimeout(()=>{ statusEl.textContent = msg||'Ready'; statusEl.title = msg||'Ready'; }, 16); }
 
     function serializeItem(item){
       if (!item || typeof item !== 'object') return null;
