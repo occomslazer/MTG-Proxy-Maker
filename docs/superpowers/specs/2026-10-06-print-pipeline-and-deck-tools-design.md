@@ -351,7 +351,9 @@ Positions are reading order across all pages (page 1 cell 1 … last page cell 9
   printing to every copy. Arrow keys / Enter navigate the grid; Esc cancels.
 - **Done** applies all assignments at once: each affected cell keeps its position and gets a new
   item with the printing's PNG and its name, back face, set and collector number (so double-sided
-  reverses follow). **Cancel** changes nothing.
+  reverses follow). A double-faced card's back face placed as its own card follows too: for each
+  changed front, one placed card showing the old back image switches to the new back. **Cancel**
+  changes nothing.
 - Status: "Changed art for 3 of 4 Lightning Bolt".
 
 ### 6.2 Add tokens

@@ -31,8 +31,8 @@ Click **Deck** in the toolbar to show a side panel with one row per card and its
 
 - **Paste decklist…** — one card per line (e.g. `4 Lightning Bolt`). Add a set code like `[M11]` or `(M11)`, or paste an Arena/Moxfield export such as `1 Sol Ring (CMR) 472` for that exact printing. Switches skip basic lands and Snow-Covered basics.
 - **+ / −** — **+** adds a copy right after the row's last copy; **−** removes the last copy. The cards after it move over to make room or close the gap, as far as the next empty cell.
-- **Hover and click** — hovering a row outlines its copies on the page; clicking a name jumps to its first copy.
-- **⇄ / Change printing…** — pick the art for each copy of a card, or use one printing for all copies. Right-click a card and choose **Change printing…** to start on that copy. Changes apply when you click **Done**.
+- **Hover and click** — hovering a row outlines its copies on the page; clicking a name jumps to its first copy. In the panel, ↑/↓ move between rows and Home/End jump to the first/last row.
+- **⇄ / Change printing…** — pick the art for each copy of a card, or use one printing for all copies. Right-click a card and choose **Change printing…** to start on that copy. Changes apply when you click **Done**; back faces placed as separate cards switch to the new art too.
 - **Add tokens…** — lists the tokens and emblems your cards make, with a quantity for each; press Enter in a quantity field to add.
 
 The panel never prints, and print preview hides it.
