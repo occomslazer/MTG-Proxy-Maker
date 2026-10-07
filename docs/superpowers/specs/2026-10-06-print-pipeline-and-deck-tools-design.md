@@ -116,7 +116,8 @@ The Advanced dialog becomes the home of every print setting. Contents, top to bo
 - `page: { w, h }` — Letter 8.5 × 11, A4 8.2677 × 11.6929.
 - `cards[9]`: `{ trim: {x, y, w, h}, bleed: {x, y, w, h} }` for front pages, in reading order.
 - `backCards[9]`: the same boxes mirrored for back pages (see 3.1).
-- `cutMarks`: line segments `{ x1, y1, x2, y2 }` for the chosen style.
+- `cutMarks`: thin rectangles `{ x, y, w, h }` (line thickness included) for the chosen style,
+  clipped to the page so nothing can spill onto an extra sheet.
 - `problem`: '' when everything fits, else a sentence explaining what doesn't.
 
 Geometry (w, h = card size; b = bleed; g = gap; all inches):
@@ -125,8 +126,11 @@ Geometry (w, h = card size; b = bleed; g = gap; all inches):
 - First bleed box: `x0 = (page.w − gridW) / 2 + offsetX`, `y0 = topMargin`.
 - Cell (col c, row r): bleed box at `(x0 + c·(bw + g), y0 + r·(bh + g))`; trim box = bleed box
   inset by `b` on every side.
-- Fit: `3·bw + 2g + 2·|offsetX| ≤ page.w` and `topMargin + 3·bh + 2g ≤ page.h`; otherwise
-  `problem` names the dimension, the needed size and the page size.
+- Fit: `3·bw + 2g + 2·|offsetX| ≤ page.w` and `topMargin + 3·bh + 2g ≤ page.h`; with double-sided
+  printing also `|offsetX + backOffsetX| ≤ (page.w − gridW)/2` and the back grid's top/bottom
+  (`topMargin + backOffsetY`) inside the page. Otherwise `problem` names what doesn't fit.
+- Loading saved or imported settings that don't fit resets the culprit: gap, bleed and back
+  offsets when those are the cause, otherwise the printer tuning.
 
 ### 2.2 Rendering
 
@@ -157,15 +161,19 @@ Thickness and colour as today.
   (including its thickness) would overlap a bleed box, so they run through gaps and margins only and
   never touch a card.
 - **Corners:** at each trim corner, two arms continuing the trim lines outward from the bleed box,
-  each `min(3 mm, g / 2)` long so neighbouring cards' marks never touch. Requires `g > 0`.
+  each `min(3 mm, 0.4 · g)` long, leaving a visible break between neighbouring cards' marks.
+  Requires `g > 0`.
 
 ## 3. Card backs (double-sided printing)
 
 ### 3.1 Back pages
 
 - With double-sided printing on, print, preview and PDF emit: front 1, back 1, front 2, back 2, …
-- Back boxes mirror the front for a long-edge flip: `x_back = page.w − x_front − width + backOffsetX`,
-  `y_back = y_front + backOffsetY` (applied to both trim and bleed boxes).
+- Back boxes mirror the front for a long-edge flip, keeping the horizontal printer offset in the
+  back page's own frame (the printer shifts both sides the same way):
+  `x_back = page.w − x_front − width + 2·offsetX + backOffsetX`, `y_back = y_front + backOffsetY`
+  (applied to both trim and bleed boxes). Corrected during review: plain mirroring would have
+  displaced the backs by twice the horizontal offset.
 - Back pages have no cut marks.
 - Preview labels each back page "Back of page N".
 
