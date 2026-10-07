@@ -1687,8 +1687,9 @@
       return color;
     }
 
-    // A card's border colour: the median of a band 1.5-3% inside each edge, skipping transparent
-    // pixels (rounded corners). Black when the image can't be read (another site without CORS).
+    // A card's border colour: the most common colour in a band 0.5-2% inside each edge (the outer
+    // border), skipping transparent pixels (rounded corners). Colours are grouped into 16 levels per
+    // channel; the winning group's average is used. Black when the image can't be read.
     // `source` is anything drawImage accepts (an <img>, an ImageBitmap, a canvas).
     function borderColorFromSource(source, naturalW, naturalH){
       let color = 'rgb(0,0,0)';
@@ -1698,20 +1699,23 @@
         const g = cv.getContext('2d', { willReadFrequently: true });
         g.drawImage(source, 0, 0, W, H);
         const data = g.getImageData(0, 0, W, H).data;
-        const rs = [], gs = [], bs = [];
+        const groups = new Map();
         for (let y = 0; y < H; y++){
           for (let x = 0; x < W; x++){
             const d = Math.min(x / W, 1 - (x + 1) / W, y / H, 1 - (y + 1) / H);
-            if (d < 0.015 || d > 0.03) continue;
+            if (d < 0.005 || d > 0.02) continue;
             const i = (y * W + x) * 4;
             if (data[i + 3] < 200) continue;
-            rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+            const r = data[i], gr = data[i + 1], bl = data[i + 2];
+            const k = ((r >> 4) << 8) | ((gr >> 4) << 4) | (bl >> 4);
+            const e = groups.get(k);
+            if (e){ e.n++; e.r += r; e.g += gr; e.b += bl; }
+            else groups.set(k, { n: 1, r: r, g: gr, b: bl });
           }
         }
-        if (rs.length){
-          const med = function(a){ a.sort(function(p, q){ return p - q; }); return a[a.length >> 1]; };
-          color = 'rgb(' + med(rs) + ',' + med(gs) + ',' + med(bs) + ')';
-        }
+        let best = null;
+        groups.forEach(function(e){ if (!best || e.n > best.n) best = e; });
+        if (best) color = 'rgb(' + Math.round(best.r / best.n) + ',' + Math.round(best.g / best.n) + ',' + Math.round(best.b / best.n) + ')';
       }catch(err){
         console.warn('Could not sample the border colour; using black', err);
       }
