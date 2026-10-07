@@ -299,7 +299,7 @@
          between pages) to push pages onto extra sheets. Its scale, shadows and display already yield
          to the rules above; back-page labels and containment are screen-only. */
       .preview-exit-bar { display: none !important; }
-      .preview-mode main { padding: 0 !important; }
+      .preview-mode main { padding: 0 !important; overflow: visible !important; }
       .preview-mode .page-wrap { margin: 0 !important; gap: 0 !important; }
 
       .cell{ outline: none !important; }
@@ -474,11 +474,12 @@
     :root[data-theme="dark"] .footnote { color:#9ca3af; }
     :root[data-theme="dark"] .warning { background:#292524; color:#fed7aa; border-color:#a16207; }
     /* Printed pages are the same in either theme: the dark theme's screen colours stay off paper (cut
-       marks in the print colour; behind the pages and in empty cells, as when "Background graphics"
-       is on). After the dark rules, so these win. */
+       marks in the print colour; text such as a broken image's alt text in the light theme's colour;
+       behind the pages and in empty cells, as when "Background graphics" is on). After the dark rules,
+       so these win. */
     @media print{
       :root, :root[data-theme="dark"] { --cut-mark-color: rgba(17, 24, 39, 0.85) !important; }
-      :root[data-theme="dark"] body { background: white; }
+      :root[data-theme="dark"] body { background: white; color: #111827; }
       :root[data-theme="dark"] .cell { background: #f9fafb; }
     }
   </style>
@@ -4294,15 +4295,16 @@
 
     /* Print settings dialog: the card back is a draft like everything else there. An upload is stored
        straight away so it can be shown (tunePendingBackKey) and is deleted unless the dialog saves it.
-       The pending key is also recorded in this tab's sessionStorage, so one left behind (the tab
-       reloaded with the dialog open) is deleted when the tab starts again; another tab's draft is never
-       touched. A duplicated tab starts with a copy of that record, so before deleting, open tabs are
-       asked whether the upload is still their draft. */
+       Pending uploads are also listed in localStorage (shared by every tab), so one left behind when a
+       tab closes or reloads with the dialog open is deleted the next time the app starts. Before
+       deleting, open tabs are asked whether an upload is still their draft, so another tab's draft is
+       never touched. */
     let tuneBackKey = null;          // the card back chosen in the dialog; null = the default
     let tunePendingBackKey = null;   // an upload that is stored but not saved
     let tuneSession = 0;             // bumped when the dialog closes, so late work from it is dropped
     let backUploadToken = 0;         // the latest upload chosen; an earlier one finishing later is dropped
-    const PENDING_BACK_KEY = 'mtgPendingBackKey';
+    const PENDING_BACKS = 'mtgPendingBackKeys';      // JSON list of pending uploads, every tab's
+    const OLD_PENDING_BACK = 'mtgPendingBackKey';    // single records kept by earlier versions
     const backDraftChannel = (typeof BroadcastChannel !== 'undefined') ? new BroadcastChannel('mtg-proxy-back-draft') : null;
     if (backDraftChannel){
       backDraftChannel.addEventListener('message', function(e){
@@ -4311,12 +4313,28 @@
       });
     }
 
-    function setPendingBack(key){
-      tunePendingBackKey = key;
+    function pendingBackList(){
       try{
-        if (key) sessionStorage.setItem(PENDING_BACK_KEY, key);
-        else sessionStorage.removeItem(PENDING_BACK_KEY);
+        const v = JSON.parse(localStorage.getItem(PENDING_BACKS) || '[]');
+        return Array.isArray(v) ? v.filter(function(k){ return typeof k === 'string' && k; }) : [];
+      }catch(_){ return []; }
+    }
+    // Adds and removes keys on the list as it is now (another tab may have changed it meanwhile).
+    function updatePendingBackList(add, remove){
+      try{
+        const list = pendingBackList().filter(function(k){ return remove.indexOf(k) === -1; });
+        add.forEach(function(k){ if (list.indexOf(k) === -1) list.push(k); });
+        if (list.length) localStorage.setItem(PENDING_BACKS, JSON.stringify(list));
+        else localStorage.removeItem(PENDING_BACKS);
       }catch(_){}
+    }
+    // The card back saved by any tab, read fresh: another tab may have just saved one.
+    function savedBackKey(){ const t = readSavedTuning(); return (t && typeof t.backImageKey === 'string' && t.backImageKey) || null; }
+
+    function setPendingBack(key){
+      const old = tunePendingBackKey;
+      tunePendingBackKey = key;
+      updatePendingBackList(key ? [key] : [], old && old !== key ? [old] : []);
     }
 
     function discardPendingBack(){
@@ -4325,23 +4343,32 @@
       return key ? Promise.resolve(imageStore.delete(key)).catch(function(){}) : Promise.resolve();
     }
 
-    // At start-up: an upload this tab's dialog never saved or discarded (the tab was reloaded) is
-    // deleted. A record an earlier version kept in localStorage, shared by every tab, is only dropped:
-    // its upload may be another open tab's draft.
+    // At start-up: uploads on the list that no open tab claims as its draft (their tab closed or
+    // reloaded with the dialog open) are deleted, after a second's wait for the answers; the start-up
+    // doesn't wait for it. The saved card back is never deleted. Records an earlier version kept (one
+    // key, in localStorage or this tab's sessionStorage) go through the same check.
     function discardLeftoverPendingBack(){
-      let key = null;
-      try{ localStorage.removeItem(PENDING_BACK_KEY); }catch(_){}
-      try{ key = sessionStorage.getItem(PENDING_BACK_KEY); sessionStorage.removeItem(PENDING_BACK_KEY); }catch(_){}
-      if (!key || key === printSettings.backImageKey) return;
-      const discard = function(){ if (key !== printSettings.backImageKey && key !== tunePendingBackKey) Promise.resolve(imageStore.delete(key)).catch(function(){}); };
-      if (!backDraftChannel){ discard(); return; }
-      let claimed = false;
-      const listen = function(e){ if (e.data && e.data.type === 'claimed' && e.data.key === key) claimed = true; };
-      backDraftChannel.addEventListener('message', listen);
-      backDraftChannel.postMessage({ type: 'claimed?', key: key });
+      const old = [];
+      try{ const k = localStorage.getItem(OLD_PENDING_BACK); if (k) old.push(k); localStorage.removeItem(OLD_PENDING_BACK); }catch(_){}
+      try{ const k = sessionStorage.getItem(OLD_PENDING_BACK); if (k) old.push(k); sessionStorage.removeItem(OLD_PENDING_BACK); }catch(_){}
+      if (old.length) updatePendingBackList(old, []);
+      const saved = savedBackKey();
+      const keys = pendingBackList().filter(function(k){ return k !== tunePendingBackKey; });
+      if (saved && keys.indexOf(saved) !== -1) updatePendingBackList([], [saved]);   // saved since: no longer pending
+      const candidates = keys.filter(function(k){ return k !== saved; });
+      if (!candidates.length) return;
+      const claimed = new Set();
+      const listen = function(e){ if (e.data && e.data.type === 'claimed' && e.data.key) claimed.add(e.data.key); };
+      if (backDraftChannel){
+        backDraftChannel.addEventListener('message', listen);
+        candidates.forEach(function(k){ backDraftChannel.postMessage({ type: 'claimed?', key: k }); });
+      }
       setTimeout(function(){
-        backDraftChannel.removeEventListener('message', listen);
-        if (!claimed) discard();
+        if (backDraftChannel) backDraftChannel.removeEventListener('message', listen);
+        const savedNow = savedBackKey();
+        const doomed = candidates.filter(function(k){ return !claimed.has(k) && k !== savedNow && k !== printSettings.backImageKey && k !== tunePendingBackKey; });
+        updatePendingBackList([], doomed.concat(candidates.filter(function(k){ return k === savedNow; })));
+        doomed.forEach(function(k){ Promise.resolve(imageStore.delete(k)).catch(function(){}); });
       }, 1000);
     }
 
@@ -5092,11 +5119,11 @@
         renderGrid(m);
       });
 
-      if (data.tuning && typeof data.tuning === 'object') await importPrintSettings(data.tuning, importedBackKey, keptKeys);
-      const settingsNote = await askImportedDfcQuestions();
-
+      // Show the imported layout before any question about it.
       syncCutMarksState();
       showPage(Math.min(Math.max(0, data.current || 0), pages.length - 1));
+      if (data.tuning && typeof data.tuning === 'object') await importPrintSettings(data.tuning, importedBackKey, keptKeys);
+      const settingsNote = await askImportedDfcQuestions();
       saveState();
       setStatus('Imported deck layout (' + pages.length + ' pages)' + (missingOwnImages
         ? ' — ' + missingOwnImages + ' of your own image(s) weren\'t in this file (lightweight exports leave them out)'
@@ -5162,6 +5189,7 @@
     // the first question means "No". Resolves with a note for the import's status.
     async function askImportedDfcQuestions(){
       if (!printSettings.duplex || printSettings.dfcOnBack !== null) return '';
+      setStatus('Checking double-faced cards…');
       const failed = await lookUpCardFaces(placedUrlItems());
       const answers = await askDuplexQuestions();
       if (answers && answers.dfcOnBack === null) return describeLookupFailures(failed);   // no DFCs
