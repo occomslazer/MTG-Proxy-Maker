@@ -1553,12 +1553,16 @@
     }
 
     function getCurrent(){ return pages[currentPage]; }
+    function updatePager(){
+      pageBadge.textContent = 'Page ' + (currentPage+1) + ' / ' + pages.length;
+      removePageBtn.disabled = (pages.length <= 1);
+    }
+
     function showPage(idx){
       currentPage = Math.max(0, Math.min(idx, pages.length-1));
       pages.forEach((p,i)=>p.pageEl.classList.toggle('current', i===currentPage));
-      pageBadge.textContent = 'Page ' + (currentPage+1) + ' / ' + pages.length;
+      updatePager();
       doUpdate();
-      removePageBtn.disabled = (pages.length <= 1);
       saveState();
     }
 
@@ -2511,11 +2515,43 @@
       return null;
     }
 
-    // Callers search forward from where they are first; when that runs out, cards continue on a
-    // new last page rather than wrapping back to gaps on earlier pages (which scrambled deck order).
+    // Adds a page at the end for placement without switching to it: the view never moves on its own.
     function appendPageSlot(){
-      var m=createPage(); pages.push(m); syncCutMarksState(); showPage(pages.length-1); saveState();
+      var m=createPage(); pages.push(m); syncCutMarksState(); updatePager(); saveState();
       return {page: pages.length-1, index: 0};
+    }
+
+    /* Where new cards go. Without an anchor, a card takes the first empty cell from page 1 in
+       reading order. `anchor.replaceAt` puts the first card exactly there (replacing what's there);
+       `anchor.from` fills empty cells from that point first. Either way the search then falls back
+       to the first empty cell from page 1, then a new last page. Each slot is found only when its
+       card is ready, so filling a page's last cell never leaves an empty page. pagesUsed feeds
+       describePlacedPages(). */
+    function createPlacement(anchor){
+      let replaceAt = anchor && anchor.replaceAt ? anchor.replaceAt : null;
+      let from = anchor && anchor.from ? anchor.from : null;
+      const pagesUsed = new Set();
+      function put(item){
+        let slot;
+        if (replaceAt && pages[replaceAt.page]) slot = replaceAt;
+        else slot = (from && nextEmptySlotFrom(from)) || nextEmptySlotFrom({ page: 0, index: 0 }) || appendPageSlot();
+        placeImage(pages[slot.page], slot.index, item);
+        replaceAt = null;
+        from = { page: slot.page, index: slot.index + 1 };
+        pagesUsed.add(slot.page);
+        return slot;
+      }
+      return { put: put, pagesUsed: pagesUsed };
+    }
+
+    // " (page 2)", " (pages 1–3)" or " (pages 1, 3)" when a card landed off the current page; '' otherwise.
+    function describePlacedPages(pagesUsed){
+      const used = Array.from(pagesUsed).sort(function(a, b){ return a - b; });
+      if (!used.length || (used.length === 1 && used[0] === currentPage)) return '';
+      const nums = used.map(function(p){ return p + 1; });
+      if (nums.length === 1) return ' (page ' + nums[0] + ')';
+      const contiguous = nums[nums.length - 1] - nums[0] === nums.length - 1;
+      return ' (pages ' + (contiguous ? nums[0] + '–' + nums[nums.length - 1] : nums.join(', ')) + ')';
     }
 
     function createPlacementState(opts){
@@ -3207,8 +3243,10 @@
         }
         if(!images || !images.front) throw new Error('Not found: '+name);
         scryCache.set(key, images);
-        await addImageSrcToNextCell(images.front, images);
-        setStatus(images.substituted ? 'Added (requested printing not found — used another)' : 'Added');
+        const placement = createPlacement();
+        await addImageSrcToNextCell(images.front, images, placement);
+        const label = 'Added ' + (images.name || name) + (images.substituted ? ' (requested printing not found — used another)' : '');
+        setStatus(label + describePlacedPages(placement.pagesUsed));
       } catch(err){ console.error(err); setStatus('Error: '+err.message); }
     }
 
@@ -3238,16 +3276,17 @@
       return out;
     }
 
-    async function addImageSrcToNextCell(src, card){
-      var pos = nextEmptySlot(currentPage) || appendPageSlot();
-      var m = pages[pos.page];
-      if (!m) return;
+    // Places one image in the next free cell (see createPlacement). Pass one placement for a run of
+    // cards so they continue in order and their pages can be reported together.
+    async function addImageSrcToNextCell(src, card, placement){
+      placement = placement || createPlacement();
       try{
         const item = card ? createUrlItem(src, card) : await createItemFromSrc(src);
-        if (!item) return;
-        placeImage(m, pos.index, item);
+        if (!item) return null;
+        return placement.put(item);
       }catch(err){
         console.error('Failed to add image to cell', err);
+        return null;
       }
     }
 
@@ -3373,6 +3412,7 @@
 
       const lookup = await fetchManyByName(names);
       let placed = 0, missing = 0, substituted = 0, failed = 0;
+      const placement = createPlacement();
       const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
       let batchCount = 0;
       for (const n of names){
@@ -3384,7 +3424,7 @@
           continue;
         }
         if (images.substituted) substituted++;
-        await addImageSrcToNextCell(images.front, images);
+        await addImageSrcToNextCell(images.front, images, placement);
         batchCount++;
         setStatus(`(${++placed}/${names.length}) ${n}`);
         if (batchCount >= 16){
@@ -3396,7 +3436,7 @@
       if (missing) notes.push(`${missing} not found`);
       if (failed) notes.push(`${failed} couldn't be looked up (Scryfall unavailable — try again shortly)`);
       if (substituted) notes.push(`${substituted} used a different printing`);
-      setStatus(notes.length ? `Done — ${notes.join(', ')}` : 'Done');
+      setStatus((notes.length ? `Done — ${notes.join(', ')}` : 'Done') + describePlacedPages(placement.pagesUsed));
       showPage(currentPage);
     }
 
@@ -3520,16 +3560,17 @@
       setStatus('Adding ' + toAdd.length + ' DFC back face(s)…');
       const pause = ((typeof window !== 'undefined' ? window.requestIdleCallback : null) || setTimeout);
       let placed = 0;
+      const placement = createPlacement();
       for (const entry of toAdd){
         // A placed back face has no further face to add.
-        await addImageSrcToNextCell(entry.backUrl, { name: entry.name, back: null });
+        await addImageSrcToNextCell(entry.backUrl, { name: entry.name, back: null }, placement);
         placed++;
         setStatus('(' + placed + '/' + toAdd.length + ') Adding DFC backs…');
         if (placed % 16 === 0){
           await yieldToEventLoop(pause);
         }
       }
-      setStatus('Added ' + toAdd.length + ' DFC back face(s)' + failureNote);
+      setStatus('Added ' + toAdd.length + ' DFC back face(s)' + describePlacedPages(placement.pagesUsed) + failureNote);
       showPage(currentPage);
     }
 
