@@ -489,6 +489,22 @@
     :root[data-theme="dark"] .deck-panel { background: #111827; border-color: #374151; }
     :root[data-theme="dark"] .deck-totals, :root[data-theme="dark"] .deck-empty, :root[data-theme="dark"] .deck-arts { color: #9ca3af; }
     :root[data-theme="dark"] .deck-row:hover, :root[data-theme="dark"] .deck-row:focus-within { background: #1f2937; }
+    .modal .art-sheet { width: min(900px, 94vw); max-height: 90vh; box-sizing: border-box; gap: 10px; }
+    .art-copies { display: flex; gap: 8px; overflow-x: auto; padding: 4px; flex: none; }
+    .art-copy { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 12px; padding: 4px; border-radius: 6px; border: 2px solid transparent; }
+    .art-copy img { width: 60px; height: 84px; object-fit: cover; border-radius: 4px; background: #e5e7eb; }
+    .art-copy[aria-selected="true"] { border-color: #2563eb; background: #eff6ff; }
+    .art-copy:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .art-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; overflow-y: auto; padding: 4px; min-height: 200px; align-content: start; }
+    .art-print { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.3; padding: 4px; border-radius: 8px; border: 2px solid transparent; }
+    .art-print img { width: 100%; aspect-ratio: 146 / 204; object-fit: cover; border-radius: 5px; background: #e5e7eb; }
+    .art-print.current { border-color: #2563eb; }
+    .art-print:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .art-print .art-set { font-weight: 600; }
+    .art-print .art-meta { color: #6b7280; }
+    :root[data-theme="dark"] .art-copy img, :root[data-theme="dark"] .art-print img { background: #1f2937; }
+    :root[data-theme="dark"] .art-copy[aria-selected="true"] { background: #1e3a8a; }
+    :root[data-theme="dark"] .art-print .art-meta { color: #9ca3af; }
 
     :root[data-theme="dark"] body { background:#0b0d10; color:#e5e7eb; }
     :root[data-theme="dark"] header { background:#111827; border-bottom-color:#1f2937; }
@@ -4793,7 +4809,7 @@
       return true;
     }
 
-    // Row controls: − and + (later features add the art picker).
+    // Row controls: − and +, and ⇄ (the art picker) on rows of Scryfall cards.
     function decorateDeckRow(li, row){
       const minus = document.createElement('button');
       minus.type = 'button'; minus.className = 'secondary deck-step deck-minus'; minus.textContent = '−';
@@ -4804,6 +4820,14 @@
       plus.setAttribute('aria-label', 'Add a copy of ' + rowPhrase(row));
       plus.addEventListener('click', function(){ deckAddCopy(row.key); });
       li.append(minus, plus);
+      if (row.canPickArt){
+        const art = document.createElement('button');
+        art.type = 'button'; art.className = 'secondary deck-art'; art.textContent = '⇄';
+        art.setAttribute('aria-label', 'Choose art for ' + rowPhrase(row));
+        art.title = 'Choose art for each copy';
+        art.addEventListener('click', function(){ openArtPicker(row.items[0].name); });
+        li.appendChild(art);
+      }
     }
 
     if (deckBtn){
@@ -4828,6 +4852,264 @@
         openModal(modal);
         if (deckText){ deckText.focus(); }
       });
+    }
+
+    /* ===== Art picker =====
+       One window per card name: every copy in the layout across the top, every printing below
+       (Scryfall, newest first). Click a copy, then a printing; Done applies all choices at once.
+       `artState` belongs to one opening: a reply that arrives after the picker closed or opened
+       again finds a different (or no) state and is dropped. */
+    var artModal = null;
+    var artState = null;
+
+    function ensureArtModal(){
+      if (artModal) return artModal;
+      const wrap = document.createElement('div');
+      wrap.innerHTML = `
+        <div id="artModal" class="modal">
+          <div class="sheet art-sheet" role="dialog" aria-modal="true" aria-labelledby="artTitle">
+            <h2 id="artTitle">Choose art</h2>
+            <div class="art-copies" role="listbox" aria-label="Copies in your layout"></div>
+            <p class="footnote" style="margin:0">Pick a copy, then a printing. ◐ marks double-faced printings.</p>
+            <div class="art-grid" role="listbox" aria-label="Printings"></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button id="artMoreBtn" class="secondary" type="button" hidden>Load more</button>
+              <span id="artStatus" class="footnote" role="status" style="margin:0"></span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button id="artAllBtn" class="secondary" type="button" disabled>Use for all copies</button>
+              <div class="right"></div>
+              <button id="artCancelBtn" class="secondary" type="button">Cancel</button>
+              <button id="artDoneBtn" type="button">Done</button>
+            </div>
+          </div>
+        </div>`;
+      artModal = wrap.firstElementChild;
+      document.body.appendChild(artModal);
+      setupModalBackdrop(artModal);
+      artModal.querySelector('#artCancelBtn').addEventListener('click', function(){ closeModal(artModal); });
+      artModal.querySelector('#artDoneBtn').addEventListener('click', applyArtChoices);
+      artModal.querySelector('#artAllBtn').addEventListener('click', function(){
+        if (!artState || !artState.picked) return;
+        artState.copies.forEach(function(c){ c.assigned = artState.picked; });
+        renderArtCopies(); renderArtPrintings();
+      });
+      artModal.querySelector('#artMoreBtn').addEventListener('click', function(){ loadArtPrintings(artState && artState.next); });
+      artModal.querySelector('.art-grid').addEventListener('keydown', onArtListKey);
+      artModal.querySelector('.art-copies').addEventListener('keydown', onArtListKey);
+      // Cancel, Esc, the backdrop and Done all close through closeModal: the choices are dropped.
+      artModal.addEventListener('modalclose', function(){ artState = null; });
+      return artModal;
+    }
+
+    function cardSmallImage(card){
+      return (card.image_uris && card.image_uris.small) || (card.card_faces && card.card_faces[0] && card.card_faces[0].image_uris && card.card_faces[0].image_uris.small) || '';
+    }
+
+    // A printing whose images are per face (no image for the card as a whole) has a back to print.
+    function isDoubleFacedPrinting(card){
+      const faces = Array.isArray(card.card_faces) ? card.card_faces : [];
+      return !card.image_uris && faces.length > 1 && !!(faces[0] && faces[0].image_uris) && !!(faces[1] && faces[1].image_uris);
+    }
+
+    function printingsSearchUrl(name, extras){
+      const q = '!"' + String(name).replace(/"/g, '') + '"';
+      return 'https://api.scryfall.com/cards/search?q=' + encodeURIComponent(q) + '&unique=prints&order=released&dir=desc' + (extras ? '&include_extras=true' : '');
+    }
+
+    // `startItem`: the copy to select first (the cell the picker was opened from), else the first copy.
+    function openArtPicker(name, startItem){
+      const want = foldName(name);
+      const copies = [];
+      for (let p = 0; p < totalPositions(); p++){
+        const it = itemAtPos(p);
+        if (it && it.type === 'url' && nameOrNull(it.name) && foldName(it.name) === want && scryfallIdOf(it)) copies.push({ item: it, assigned: null });
+      }
+      if (!copies.length){ setStatus('No copies of ' + name + ' to change'); return; }
+      const modal = ensureArtModal();
+      const start = copies.findIndex(function(c){ return c.item === startItem; });
+      artState = { name: copies[0].item.name, copies: copies, selected: Math.max(0, start), picked: null, printings: [], next: null };
+      modal.querySelector('#artTitle').textContent = 'Choose art — ' + artState.name;
+      modal.querySelector('.art-grid').innerHTML = '';
+      const more = modal.querySelector('#artMoreBtn');
+      more.hidden = true; more.disabled = false;
+      modal.querySelector('#artAllBtn').disabled = true;
+      modal.querySelector('#artStatus').textContent = '';
+      renderArtCopies();
+      openModal(modal);
+      const selectedCopy = modal.querySelectorAll('.art-copy')[artState.selected];
+      if (selectedCopy) selectedCopy.focus();
+      startArtSearch();
+    }
+
+    async function startArtSearch(){
+      const state = artState;
+      const status = artModal.querySelector('#artStatus');
+      status.textContent = 'Loading printings…';
+      // Tokens and other extras only show up with include_extras; a full double-faced name may need
+      // its front face name.
+      const names = [state.name];
+      if (state.name.indexOf(' // ') !== -1) names.push(state.name.split(' // ')[0]);
+      for (const n of names){
+        for (const extras of [false, true]){
+          let page;
+          try { page = await fetchScryfallJson(printingsSearchUrl(n, extras)); }
+          catch(err){ if (artState === state) status.textContent = 'Couldn\'t load printings (' + err.message + ')'; return; }
+          if (artState !== state) return;
+          if (page && Array.isArray(page.data) && page.data.length){ addArtPrintings(page); return; }
+        }
+      }
+      status.textContent = 'No printings found';
+    }
+
+    async function loadArtPrintings(url){
+      if (!url || !artState) return;
+      const state = artState;
+      const btn = artModal.querySelector('#artMoreBtn');
+      const grid = artModal.querySelector('.art-grid');
+      // Disabling and then hiding the button would drop keyboard focus out of the dialog: it moves
+      // to the first new printing instead (or back to the button if nothing came).
+      const hadFocus = document.activeElement === btn;
+      const before = state.printings.length;
+      btn.disabled = true;
+      artModal.querySelector('#artStatus').textContent = 'Loading more…';
+      try{
+        const page = await fetchScryfallJson(url);
+        if (artState !== state) return;
+        if (page) addArtPrintings(page);
+        else artModal.querySelector('#artStatus').textContent = countOf(state.printings.length, 'printing', 'printings');
+      }catch(err){
+        if (artState === state) artModal.querySelector('#artStatus').textContent = 'Couldn\'t load more (' + err.message + ')';
+      }finally{
+        if (artState === state){
+          btn.disabled = false;
+          if (hadFocus){
+            const target = grid.children[before] || (btn.hidden ? artModal.querySelector('#artDoneBtn') : btn);
+            target.focus();
+          }
+        }
+      }
+    }
+
+    function addArtPrintings(page){
+      artState.printings = artState.printings.concat(page.data || []);
+      artState.next = page.has_more ? page.next_page : null;
+      artModal.querySelector('#artMoreBtn').hidden = !artState.next;
+      artModal.querySelector('#artStatus').textContent = countOf(artState.printings.length, 'printing', 'printings');
+      renderArtPrintings();
+    }
+
+    function effectiveArtId(copy){ return copy.assigned ? String(copy.assigned.id).toLowerCase() : scryfallIdOf(copy.item); }
+
+    function renderArtCopies(){
+      const strip = artModal.querySelector('.art-copies');
+      strip.innerHTML = '';
+      artState.copies.forEach(function(c, i){
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'art-copy';
+        b.setAttribute('role', 'option');
+        b.setAttribute('aria-selected', i === artState.selected ? 'true' : 'false');
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = c.assigned ? cardSmallImage(c.assigned) : c.item.url;
+        const p = positionOfItem(c.item);
+        const cap = document.createElement('span');
+        const parts = ['Copy ' + (i + 1)];
+        if (p >= 0) parts.push('page ' + (posToSlot(p).page + 1));
+        if (c.assigned) parts.push('changed');
+        cap.textContent = parts.join(' · ');
+        // The caption is the option's name, given explicitly (the thumbnail has no text of its own).
+        b.setAttribute('aria-label', parts.join(', '));
+        b.append(img, cap);
+        b.addEventListener('click', function(){ artState.selected = i; renderArtCopies(); renderArtPrintings(); strip.children[i].focus(); });
+        strip.appendChild(b);
+      });
+    }
+
+    function renderArtPrintings(){
+      const grid = artModal.querySelector('.art-grid');
+      const focusedIndex = Array.prototype.indexOf.call(grid.children, document.activeElement);
+      grid.innerHTML = '';
+      const current = effectiveArtId(artState.copies[artState.selected]);
+      artState.printings.forEach(function(card){
+        const isCurrent = String(card.id).toLowerCase() === current;
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'art-print' + (isCurrent ? ' current' : '');
+        b.setAttribute('role', 'option');
+        b.setAttribute('aria-selected', isCurrent ? 'true' : 'false');
+        const img = document.createElement('img');
+        img.alt = ''; img.loading = 'lazy'; img.src = cardSmallImage(card);
+        const dfc = isDoubleFacedPrinting(card);
+        const set = document.createElement('span'); set.className = 'art-set';
+        if (dfc){
+          const mark = document.createElement('span');
+          mark.setAttribute('aria-hidden', 'true');
+          mark.textContent = '◐ ';
+          set.appendChild(mark);
+        }
+        set.appendChild(document.createTextNode(card.set_name || card.set || ''));
+        const year = card.released_at ? String(card.released_at).slice(0, 4) : '';
+        const code = String(card.set || '').toUpperCase();
+        const meta = document.createElement('span'); meta.className = 'art-meta';
+        meta.textContent = code + ' #' + card.collector_number + (year ? ' · ' + year : '');
+        b.append(img, set, meta);
+        b.setAttribute('aria-label', (card.set_name || code) + ', ' + code + ' number ' + card.collector_number + (year ? ', ' + year : '') + (dfc ? ', double-faced' : ''));
+        b.addEventListener('click', function(){
+          artState.picked = card;
+          artState.copies[artState.selected].assigned = card;
+          artModal.querySelector('#artAllBtn').disabled = false;
+          renderArtCopies(); renderArtPrintings();
+        });
+        grid.appendChild(b);
+      });
+      if (focusedIndex >= 0 && grid.children[focusedIndex]) grid.children[focusedIndex].focus();
+    }
+
+    // Arrow keys move through the copies (Left/Right) and the printings (Up/Down by a row too);
+    // Home/End go to the first/last. Enter and Space press the focused button natively.
+    function onArtListKey(e){
+      const list = e.currentTarget;
+      const items = Array.from(list.children);
+      const i = items.indexOf(document.activeElement);
+      if (i === -1) return;
+      let cols = items.length;
+      if (list.classList.contains('art-grid')){
+        const top = items[0].offsetTop;
+        const firstOfRow2 = items.findIndex(function(el){ return el.offsetTop !== top; });
+        if (firstOfRow2 > 0) cols = firstOfRow2;
+      }
+      const steps = { ArrowRight: 1, ArrowLeft: -1, Home: -items.length, End: items.length };
+      if (list.classList.contains('art-grid')){ steps.ArrowDown = cols; steps.ArrowUp = -cols; }
+      const step = steps[e.key];
+      if (!step) return;
+      e.preventDefault();
+      items[Math.min(items.length - 1, Math.max(0, i + step))].focus();
+    }
+
+    function positionOfItem(item){
+      for (let p = 0; p < totalPositions(); p++) if (itemAtPos(p) === item) return p;
+      return -1;
+    }
+
+    // Done: every copy given a different printing gets a fresh card in the cell it is in now (found by
+    // the item itself; a copy no longer in the layout is skipped). The status counts only cells changed.
+    function applyArtChoices(){
+      if (!artState){ closeModal(artModal); return; }
+      const state = artState;
+      let changed = 0;
+      state.copies.forEach(function(c){
+        if (!c.assigned || scryfallIdOf(c.item) === String(c.assigned.id).toLowerCase()) return;
+        const p = positionOfItem(c.item);
+        if (p === -1) return;
+        const images = makeCardImages(c.assigned);
+        if (!images.front) return;
+        discardItem(c.item);
+        setItemAtPos(p, createUrlItem(images.front, images));
+        changed++;
+      });
+      if (changed){ clearInternalClipboard(); saveState(); }
+      closeModal(artModal);
+      setStatus('Changed art for ' + changed + ' of ' + state.copies.length + ' ' + state.name);
     }
 
     /* ===== Export / Import ===== */
@@ -6406,7 +6688,15 @@
       ctxMenu.innerHTML = '';
       ctxTarget = null;
       if (wasOpen && focusEl){
+        const modalBefore = topModal();
         setTimeout(function(){
+          // A dialog the chosen item opened keeps the focus; it gives it back to the menu's cell (not
+          // to the removed menu item) when it closes.
+          if (topModal() && topModal() !== modalBefore){
+            const opened = modalStack[modalStack.findIndex(function(e){ return e.modal === modalBefore; }) + 1];
+            if (opened) opened.focus = focusEl;
+            return;
+          }
           try{ focusEl.focus({ preventScroll: true }); }
           catch(_){ focusEl.focus(); }
         }, 0);
@@ -6548,6 +6838,13 @@
       cellSection.appendChild(ctxItem('Duplicate to next empty cell', function(){
         duplicateToNextEmpty(model, index);
       }, { disabled: !hasImage }));
+      // Only Scryfall card fronts have other printings to choose from.
+      const cellItem = model.items[index];
+      const canChangePrinting = !!(cellItem && cellItem.type === 'url' && nameOrNull(cellItem.name) && scryfallIdOf(cellItem));
+      cellSection.appendChild(ctxItem('Change printing…', function(){
+        const it = model.items[index];
+        if (it && nameOrNull(it.name)) openArtPicker(it.name, it);
+      }, { disabled: !canChangePrinting }));
       cellSection.appendChild(ctxItem('Clear cell', function(){
         if (!model.items[index]) return;
         discardItem(model.items[index]);
