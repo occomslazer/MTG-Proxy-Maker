@@ -306,6 +306,9 @@
       .cell .placeholder{ display: none !important; }
       .cell::after{ display:none !important; }
       .ctx-menu { display: none !important; }
+      /* Anything drawn over the pages on screen stays off paper: an open dialog (Ctrl+P works behind
+         one), the drag ghost, the focused skip link. Fixed boxes would otherwise print on every sheet. */
+      .modal, .drag-ghost, .skip-link { display: none !important; }
 
       img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
@@ -2110,6 +2113,7 @@
       const img = cell.querySelector('img');
       const rect = (img || cell).getBoundingClientRect();
       const ghost = document.createElement('img');
+      ghost.className = 'drag-ghost';
       ghost.src = img ? img.src : '';
       ghost.alt = '';
       ghost.style.position='fixed';
@@ -2768,7 +2772,7 @@
     let _handlingPaste = false;
 
     document.addEventListener('paste', async function(e){
-      if (previewActive) return;
+      if (previewActive || topModal()) return;
       const active = document.activeElement;
       if(active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) return;
 
@@ -3202,6 +3206,9 @@
 
     /* ===== Keyboard A11y & Hotkeys ===== */
     document.addEventListener('keydown', function(e){
+      // An open dialog has the keyboard: its own keys and Esc (handled with the dialogs) only. Page
+      // shortcuts wait until it closes, so nothing changes behind it.
+      if(topModal()) return;
       const tag = (e.target && e.target.tagName) || '';
       const typing = /INPUT|TEXTAREA|SELECT/.test(tag);
       if(typing){
