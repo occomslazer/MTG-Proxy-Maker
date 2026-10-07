@@ -60,12 +60,14 @@
     input[type="checkbox"]:checked{ background: #2563eb; border-color: #1d4ed8; }
     input[type="checkbox"]:checked::before{ transform: translateX(14px); }
     input[type="checkbox"]:disabled{ opacity: .5; cursor: default; }
-    :root[data-theme="dark"] input[type="checkbox"]{ background: #334155; border-color: #475569; }
+    :root[data-theme="dark"] input[type="checkbox"]{ background: #334155; border-color: #64748b; }
     :root[data-theme="dark"] input[type="checkbox"]:checked{ background: #3b82f6; border-color: #2563eb; }
     @media (forced-colors: active){
-      input[type="checkbox"]:checked{ background: Highlight; border-color: Highlight; }
+      input[type="checkbox"]:checked,
+      :root[data-theme="dark"] input[type="checkbox"]:checked{ background: Highlight; border-color: Highlight; }
       input[type="checkbox"]::before{ background: ButtonText; }
       input[type="checkbox"]:checked::before{ background: HighlightText; }
+      input[type="checkbox"]:disabled{ opacity: 1; border-color: GrayText; }
     }
 
     .controls{ max-width:1200px; width:100%; margin: 0 auto; }
@@ -1424,17 +1426,28 @@
                              dfcOnBack: null, backImageKey: null, backOffsetXIn: 0, backOffsetYIn: 0 };
     let printSettings = Object.assign({}, PRINT_DEFAULTS);
 
+    function regionOf(tag){
+      try{ const r = new Intl.Locale(String(tag)).region; if (r) return r; }catch(_){}
+      const m = /^[A-Za-z]{2,3}(?:-[A-Za-z]{4})?-([A-Za-z]{2}|\d{3})(?:-|$)/.exec(String(tag));
+      return m ? m[1] : null;
+    }
+
+    // First language tag with a two-letter country decides; numeric regions (e.g. es-419, Latin
+    // America) don't name a country, so keep looking. No country at all means Letter.
     function regionPaper(){
       const tags = (navigator.languages && navigator.languages.length) ? navigator.languages : [navigator.language || ''];
       for (const tag of tags){
-        const m = /-([A-Za-z]{2})(?:-|$)/.exec(String(tag));
-        if (m) return LETTER_REGIONS.has(m[1].toUpperCase()) ? 'letter' : 'a4';
+        const region = regionOf(tag);
+        if (region && /^[A-Za-z]{2}$/.test(region)) return LETTER_REGIONS.has(region.toUpperCase()) ? 'letter' : 'a4';
       }
       return 'letter';
     }
 
     function readSavedTuning(){
-      try{ return JSON.parse(localStorage.getItem('mtgTuning') || 'null'); }catch(_){ return null; }
+      try{
+        const v = JSON.parse(localStorage.getItem('mtgTuning') || 'null');
+        return (v && typeof v === 'object' && !Array.isArray(v)) ? v : null;
+      }catch(_){ return null; }
     }
 
     // Saved values win; invalid ones fall back to defaults. Anyone who has used the app before (saved
@@ -1447,7 +1460,7 @@
       if (Object.prototype.hasOwnProperty.call(PAPER_SIZES, t.paper)) s.paper = t.paper;
       else {
         let returning = !!saved;
-        try{ returning = returning || !!localStorage.getItem('mtgProxyPages'); }catch(_){}
+        try{ returning = returning || !!localStorage.getItem('mtgProxyPages') || localStorage.getItem('mtgThemeDark') !== null; }catch(_){}
         s.paper = returning ? 'letter' : regionPaper();
       }
       if (GAP_CHOICES_MM.includes(t.gapMm)) s.gapMm = t.gapMm;
@@ -4120,18 +4133,21 @@
         var raw = localStorage.getItem('mtgTuning');
         if(raw){
           var t = JSON.parse(raw)||{};
-          var top  = (typeof t.topIn   !== 'undefined') ? Number(t.topIn)   : readInchesVar('--grid-top', .25);
-          var left = (typeof t.leftIn  !== 'undefined') ? Number(t.leftIn)  : readInchesVar('--grid-left', 0);
-          var w    = (typeof t.cardWIn !== 'undefined') ? Number(t.cardWIn) : readInchesVar('--cell-w', 2.4750);
-          var h    = (typeof t.cardHIn !== 'undefined') ? Number(t.cardHIn) : readInchesVar('--cell-h', 3.4650);
-          // Saved by an older version or carried in by an imported file
-          var problem = tuningProblem(top, left, w, h);
-          if (problem){
-            console.warn('Ignoring saved printer tuning: ' + problem);
-            setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
-            top = 0.25; left = 0; w = 2.4750; h = 3.4650;
+          var hasGeometry = ['topIn','leftIn','cardWIn','cardHIn'].some(function(k){ return typeof t[k] !== 'undefined'; });
+          if (hasGeometry){
+            var top  = (typeof t.topIn   !== 'undefined') ? Number(t.topIn)   : readInchesVar('--grid-top', .25);
+            var left = (typeof t.leftIn  !== 'undefined') ? Number(t.leftIn)  : readInchesVar('--grid-left', 0);
+            var w    = (typeof t.cardWIn !== 'undefined') ? Number(t.cardWIn) : readInchesVar('--cell-w', 2.4750);
+            var h    = (typeof t.cardHIn !== 'undefined') ? Number(t.cardHIn) : readInchesVar('--cell-h', 3.4650);
+            // Saved by an older version or carried in by an imported file
+            var problem = tuningProblem(top, left, w, h);
+            if (problem){
+              console.warn('Ignoring saved printer tuning: ' + problem);
+              setStatus('Saved printer tuning didn\'t fit the page and was reset to defaults');
+              top = 0.25; left = 0; w = 2.4750; h = 3.4650;
+            }
+            applyTuning(top, left, w, h);
           }
-          applyTuning(top, left, w, h);
           if (tuneScaleLock){
             tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
           }
