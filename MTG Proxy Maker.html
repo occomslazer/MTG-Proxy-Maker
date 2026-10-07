@@ -508,6 +508,14 @@
     @media (forced-colors: active){
       .art-copy[aria-selected="true"], .art-print.current { border-color: Highlight; }
     }
+    .modal .tokens-sheet { width: min(620px, 94vw); max-height: 85vh; box-sizing: border-box; gap: 10px; }
+    .tokens-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .token-row { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; padding: 6px 8px; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .token-row .token-name { font-weight: 600; overflow-wrap: anywhere; }
+    .token-row .token-meta { grid-column: 1; font-size: 12px; color: #6b7280; overflow-wrap: anywhere; }
+    .token-row input { width: 64px; grid-row: 1 / span 2; grid-column: 2; }
+    :root[data-theme="dark"] .token-row { border-color: #374151; }
+    :root[data-theme="dark"] .token-row .token-meta { color: #9ca3af; }
 
     :root[data-theme="dark"] body { background:#0b0d10; color:#e5e7eb; }
     :root[data-theme="dark"] header { background:#111827; border-bottom-color:#1f2937; }
@@ -617,7 +625,7 @@
       <aside id="deckPanel" class="deck-panel screen-only" aria-label="Deck" hidden>
         <div class="deck-actions">
           <button id="deckPasteBtn" class="secondary" type="button">Paste decklist…</button>
-          <button id="deckTokensBtn" class="secondary" type="button" disabled title="Available once tokens are supported">Add tokens…</button>
+          <button id="deckTokensBtn" class="secondary" type="button">Add tokens…</button>
         </div>
         <div id="deckTotals" class="deck-totals"></div>
         <p id="deckEmpty" class="deck-empty" hidden>Paste a decklist or add cards to get started.</p>
@@ -5159,6 +5167,175 @@
       closeModal(artModal);
       setStatus(changed ? 'Changed art for ' + changed + ' of ' + state.copies.length + ' ' + state.name : 'No art changed');
     }
+
+    /* ===== Add tokens =====
+       Tokens and emblems the layout's cards make (Scryfall all_parts), each with a quantity. */
+    var tokensModal = null;
+    var tokensFound = [];
+    var tokensLooking = false;
+
+    // A quantity box's text as a count: whole numbers 0-99; anything else is 0.
+    function tokenQuantity(value){
+      const n = Math.floor(Number(value));
+      return isFinite(n) ? Math.max(0, Math.min(99, n)) : 0;
+    }
+
+    // Scryfall files tokens under component 'token' but emblems under 'combo_piece', so a part also
+    // counts when its type line starts with Token or Emblem.
+    function isTokenPart(part){
+      return part.component === 'token' || /^(token|emblem)\b/i.test(part.type_line || '');
+    }
+
+    // Looks up the layout's Scryfall cards (75 per request) and collects the tokens they make,
+    // de-duplicated by name + type line. A token is "in layout" when a layout card (or one face of a
+    // double-faced one) has its name. Resolves { tokens: [{ id, name, typeLine, makers[], inLayout }],
+    // failed } where failed counts cards whose lookup failed.
+    async function findLayoutTokens(){
+      const ids = [];
+      const seen = new Set();
+      const layoutNames = new Set();
+      for (let p = 0; p < totalPositions(); p++){
+        const it = itemAtPos(p);
+        if (!it || it.type !== 'url') continue;
+        if (it.name){
+          layoutNames.add(foldName(it.name));
+          it.name.split(' // ').forEach(function(n){ layoutNames.add(foldName(n)); });
+        }
+        const id = scryfallIdOf(it);
+        if (id && !seen.has(id)){ seen.add(id); ids.push(id); }
+      }
+      const byKey = new Map();
+      let failed = 0;
+      for (let i = 0; i < ids.length; i += 75){
+        const chunk = ids.slice(i, i + 75);
+        let cards;
+        try { cards = await postCollection(chunk.map(function(id){ return { id: id }; })); }
+        catch(err){ console.warn('Token lookup failed', err); failed += chunk.length; continue; }
+        cards.forEach(function(card){
+          (Array.isArray(card.all_parts) ? card.all_parts : []).forEach(function(part){
+            if (!isTokenPart(part) || String(part.id).toLowerCase() === String(card.id).toLowerCase()) return;
+            const key = foldName(part.name) + '|' + foldName(part.type_line || '');
+            let t = byKey.get(key);
+            if (!t){
+              t = { id: String(part.id).toLowerCase(), name: part.name, typeLine: part.type_line || '', makers: [], inLayout: layoutNames.has(foldName(part.name)) };
+              byKey.set(key, t);
+            }
+            if (t.makers.indexOf(card.name) === -1) t.makers.push(card.name);
+          });
+        });
+      }
+      return { tokens: Array.from(byKey.values()), failed: failed };
+    }
+
+    function ensureTokensModal(){
+      if (tokensModal) return tokensModal;
+      const wrap = document.createElement('div');
+      wrap.innerHTML = `
+        <div id="tokensModal" class="modal">
+          <div class="sheet tokens-sheet" role="dialog" aria-modal="true" aria-labelledby="tokensTitle">
+            <h2 id="tokensTitle">Add tokens</h2>
+            <p class="footnote" style="margin:0">Tokens and emblems your cards make. Set a quantity for each (0 skips it).</p>
+            <ul class="tokens-list"></ul>
+            <div id="tokensNote" class="footnote" role="status" style="margin:0"></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <div class="right"></div>
+              <button id="tokensCancelBtn" class="secondary" type="button">Cancel</button>
+              <button id="tokensAddBtn" type="button">Add</button>
+            </div>
+          </div>
+        </div>`;
+      tokensModal = wrap.firstElementChild;
+      document.body.appendChild(tokensModal);
+      setupModalBackdrop(tokensModal);
+      tokensModal.querySelector('#tokensCancelBtn').addEventListener('click', function(){ closeModal(tokensModal); });
+      tokensModal.querySelector('#tokensAddBtn').addEventListener('click', addChosenTokens);
+      return tokensModal;
+    }
+
+    async function openTokensDialog(){
+      if (tokensLooking) return;
+      tokensLooking = true;
+      const btn = document.getElementById('deckTokensBtn');
+      if (btn) btn.disabled = true;
+      setStatus('Looking for tokens…');
+      try{
+        const found = await findLayoutTokens();
+        if (!found.tokens.length){
+          setStatus(found.failed ? 'Couldn\'t look up tokens (Scryfall unavailable — try again shortly)' : 'No tokens found for the cards in this layout');
+          return;
+        }
+        tokensFound = found.tokens;
+        const modal = ensureTokensModal();
+        const list = modal.querySelector('.tokens-list');
+        list.innerHTML = '';
+        found.tokens.forEach(function(t, i){
+          const li = document.createElement('li');
+          li.className = 'token-row';
+          const name = document.createElement('span'); name.className = 'token-name'; name.id = 'tokenName' + i;
+          name.textContent = t.name + (t.inLayout ? ' (already in layout)' : '');
+          const meta = document.createElement('span'); meta.className = 'token-meta';
+          meta.textContent = t.typeLine + ' · made by ' + t.makers.join(', ');
+          const qty = document.createElement('input');
+          qty.type = 'number'; qty.min = '0'; qty.max = '99'; qty.step = '1';
+          qty.value = t.inLayout ? '0' : '1';
+          qty.setAttribute('aria-labelledby', name.id);
+          li.append(name, meta, qty);
+          list.appendChild(li);
+        });
+        modal.querySelector('#tokensNote').textContent = found.failed ? countOf(found.failed, 'card', 'cards') + ' couldn\'t be checked (Scryfall unavailable).' : '';
+        modal.querySelector('#tokensAddBtn').disabled = false;
+        setStatus('Ready');
+        openModal(modal);
+      }catch(err){
+        console.error('Token lookup failed', err);
+        setStatus('Couldn\'t look up tokens');
+      }finally{
+        tokensLooking = false;
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    // Adds the chosen tokens (a fresh Scryfall lookup of each, for its images) in the dialog's order.
+    // placeImage saves the layout after each card. The Add button stays disabled until it's done, so
+    // a double click can't add twice.
+    async function addChosenTokens(){
+      const addBtn = tokensModal.querySelector('#tokensAddBtn');
+      if (addBtn.disabled) return;
+      const wanted = [];
+      Array.from(tokensModal.querySelectorAll('.token-row input')).forEach(function(input, i){
+        const n = tokenQuantity(input.value);
+        if (n > 0) wanted.push({ token: tokensFound[i], count: n });
+      });
+      if (!wanted.length){ closeModal(tokensModal); setStatus('No tokens added'); return; }
+      addBtn.disabled = true;
+      tokensModal.querySelector('#tokensNote').textContent = 'Adding tokens…';
+      try{
+        const cards = new Map();
+        const ids = wanted.map(function(w){ return w.token.id; });
+        for (let i = 0; i < ids.length; i += 75){
+          const chunk = ids.slice(i, i + 75);
+          (await postCollection(chunk.map(function(id){ return { id: id }; }))).forEach(function(c){ cards.set(String(c.id).toLowerCase(), c); });
+        }
+        const placement = createPlacement();
+        let added = 0, missing = 0;
+        wanted.forEach(function(w){
+          const images = makeCardImages(cards.get(w.token.id));
+          if (!images.front){ missing += w.count; return; }
+          for (let k = 0; k < w.count; k++){ placement.put(createUrlItem(images.front, images)); added++; }
+        });
+        closeModal(tokensModal);
+        setStatus(added
+          ? 'Added ' + countOf(added, 'token', 'tokens') + (missing ? ' (' + missing + ' couldn\'t be found)' : '') + describePlacedPages(placement.pagesUsed)
+          : 'Couldn\'t find the chosen tokens on Scryfall');
+      }catch(err){
+        console.warn('Adding tokens failed', err);
+        tokensModal.querySelector('#tokensNote').textContent = 'Couldn\'t add tokens (Scryfall unavailable — try again shortly).';
+        setStatus('Couldn\'t add tokens');
+      }finally{ addBtn.disabled = false; }
+    }
+
+    const deckTokensBtn = document.getElementById('deckTokensBtn');
+    if (deckTokensBtn) deckTokensBtn.addEventListener('click', openTokensDialog);
 
     /* ===== Export / Import ===== */
     var exportBtn = document.getElementById('exportBtn');
