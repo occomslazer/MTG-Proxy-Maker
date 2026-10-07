@@ -5150,23 +5150,49 @@
 
     // Done: every copy given a different printing gets a fresh card in the cell it is in now (found by
     // the item itself; a copy no longer in the layout is skipped). The status counts only cells changed.
+    // A double-faced copy's back face placed as a card of its own ("Add missing DFC backs") changes
+    // with it, in its cell: one placed back per changed front, found by the old back image, and each
+    // placed back is used once. If the new printing has no back image, that placed back stays as it was.
     function applyArtChoices(){
       if (!artState){ closeModal(artModal); return; }
       const state = artState;
-      let changed = 0;
+      let changed = 0, backsChanged = 0, backsKept = 0;
+      const backsUsed = new Set();   // positions of placed backs already matched in this Done
+      function placedBackAt(backUrl){
+        const want = imageUrlKey(backUrl);
+        for (let q = 0; q < totalPositions(); q++){
+          if (backsUsed.has(q)) continue;
+          const it = itemAtPos(q);
+          if (it && it.type === 'url' && it.url && imageUrlKey(it.url) === want) return q;
+        }
+        return -1;
+      }
       state.copies.forEach(function(c){
         if (!c.assigned || scryfallIdOf(c.item) === String(c.assigned.id).toLowerCase()) return;
         const p = positionOfItem(c.item);
         if (p === -1) return;
         const images = makeCardImages(c.assigned);
         if (!images.front) return;
+        const oldBack = typeof c.item.back === 'string' && c.item.back ? c.item.back : null;
         discardItem(c.item);
         setItemAtPos(p, createUrlItem(images.front, images));
         changed++;
+        if (!oldBack) return;
+        const q = placedBackAt(oldBack);
+        if (q === -1) return;
+        backsUsed.add(q);
+        if (!images.back){ backsKept++; return; }
+        discardItem(itemAtPos(q));
+        // A placed back face has no further face of its own.
+        setItemAtPos(q, createUrlItem(images.back, { name: images.name, back: null, set: images.set, collectorNumber: images.collectorNumber }));
+        backsChanged++;
       });
       if (changed){ clearInternalClipboard(); saveState(); }
       closeModal(artModal);
-      setStatus(changed ? 'Changed art for ' + changed + ' of ' + state.copies.length + ' ' + state.name : 'No art changed');
+      let msg = changed ? 'Changed art for ' + changed + ' of ' + state.copies.length + ' ' + state.name : 'No art changed';
+      if (backsChanged) msg += ' (and ' + countOf(backsChanged, 'placed back face', 'placed back faces') + ')';
+      if (backsKept) msg += '; left ' + countOf(backsKept, 'placed back face', 'placed back faces') + ' as ' + (backsKept === 1 ? 'it was' : 'they were') + ' (the new printing has no back face)';
+      setStatus(msg);
     }
 
     /* ===== Add tokens =====
