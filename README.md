@@ -54,12 +54,18 @@ No build step, no dependencies, no server required.
 
 ## Print & Calibration
 
-Cards default to 2.475″ × 3.465″ (99% of the standard 2.5″ × 3.5″). If prints appear clipped or misaligned:
+Cards default to 2.475″ × 3.465″ (99% of the standard 2.5″ × 3.5″). Press **?** to open Help, then click **Print settings** to choose:
 
-1. Press **?** to open Help, then click **Advanced**
-2. Adjust top margin, horizontal offset, or card dimensions
-3. Enable **Scale lock** to maintain the 2.5 × 3.5 aspect ratio
-4. Choose **Cover** (fill cell, may crop edges) or **Contain** (fit inside, may show margins)
+- **Paper** — Letter or A4
+- **Gap between cards** — 0–3 mm
+- **Bleed** — 0–3 mm of border colour around each card, so slightly-off cuts don't show white
+- **Cut lines** — Ticks (short marks in the margin), Full lines (for trimmers) or Corners (needs a gap)
+
+If prints appear clipped or misaligned, open **Printer fine-tuning** in the same dialog:
+
+1. Adjust top margin, horizontal offset, or card dimensions
+2. Leave **Keep 2.5×3.5 ratio** on to maintain the aspect ratio
+3. Choose **Cover** (fill cell, may crop edges) or **Contain** (fit inside, may show margins)
 
 ## Export & Import
 
