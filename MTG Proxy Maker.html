@@ -2111,8 +2111,9 @@
     // dialog for a replace calls fileInput.click(), which bubbles to the label with the input as
     // target, so only clicks on the label itself clear it.)
     fileInput.addEventListener('cancel', function(){ targetIndexForFile = null; });
-    if (fileInput.parentElement){
-      fileInput.parentElement.addEventListener('click', function(e){
+    const addImagesLabel = fileInput.closest('label');
+    if (addImagesLabel){
+      addImagesLabel.addEventListener('click', function(e){
         if (e.target !== fileInput) targetIndexForFile = null;
       });
     }
@@ -4227,15 +4228,17 @@
       if (!model || !model.items[index]) return null;
       const pageIdx = pages.indexOf(model);
       if (pageIdx === -1) return null;
+      // Built before the await: the anchor follows the page object, so a page removed meanwhile can't redirect the copy.
+      const placement = createPlacement({ from: { page: pageIdx, index: index + 1 } });
       try{
         const clone = await cloneItem(model.items[index]);
-        if (!clone) return null;
-        const placement = createPlacement({ from: { page: pageIdx, index: index + 1 } });
+        if (!clone){ setStatus('Could not duplicate card'); return null; }
         const slot = placement.put(clone);
         setStatus('Duplicated card' + describePlacedPages(placement.pagesUsed));
         return slot;
       }catch(err){
         console.error('Failed to duplicate image', err);
+        setStatus('Could not duplicate card');
         return null;
       }
     }
