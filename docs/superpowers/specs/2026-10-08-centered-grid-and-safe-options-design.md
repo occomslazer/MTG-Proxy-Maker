@@ -16,7 +16,18 @@ with a 3 mm gap lost about 1 mm at the bottom. The grid started 0.25″ from the
   `offsetY = topIn − (page.h − gridH) / 2`. A saved `topIn` of exactly 0.25 (the old default, which
   Save stored even when untouched) converts to 0 (centred). After conversion only the offset is
   saved; `topIn` is no longer written.
-- Imported files that carry `topIn` are converted the same way when their settings are used.
+- Offsets are whole hundredths of an inch, and the room above the grid rarely is, so the conversion
+  rounds to the nearest hundredth that keeps the front and the back (with the saved back offset) on
+  the page. The cards move by less than 0.01″, and settings that fitted before are never reset by
+  the conversion. The converted value is saved only once it is known to fit.
+- In the rare case where no hundredth fits (a nearly full-height grid with a back offset), the
+  nearest offset is applied for the session but not saved: the old margin stays stored and is
+  converted again on each load, nothing is reset, and a note asks the user to check the vertical
+  offset in Print settings. PDF export shows the layout problem until the user fixes the offset there.
+- Imported files that carry `topIn` are converted the same way when their settings are used, for the
+  settings they will print with: the file's paper, gap, bleed, card size and back offset, and mine
+  for any the file lacks or has invalid (a damaged file's invalid paper, gap or bleed is left out, so
+  mine are kept). "Use the file's" replaces my vertical placement only when the file has one.
 - The fit rule for Save and loading is unchanged in spirit: the whole grid (front and back, with
   offsets) must be on the page. The old "top margin ≥ 0" check becomes "top edge ≥ 0" and
   "bottom edge ≤ page height".

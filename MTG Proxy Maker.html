@@ -6468,10 +6468,18 @@
         fitMode: savedFitMode, scaleLock: typeof saved.scaleLock === 'undefined' ? true : !!saved.scaleLock
       });
       const keys = ['paper','gapMm','bleedMm','cutStyle','duplex','dfcOnBack','backOffsetXIn','backOffsetYIn','offsetYIn','leftIn','cardWIn','cardHIn','fitMode','scaleLock'];
+      // A paper, gap or bleed in the file that isn't valid (a damaged file) would load as the default:
+      // leave it out, so mine is compared, kept and used to place the cards, like a missing one.
+      const theirsRaw = Object.assign({}, theirs);
+      ['paper', 'gapMm', 'bleedMm'].forEach(function(k){
+        if (!Object.prototype.hasOwnProperty.call(theirsRaw, k)) return;
+        const one = {}; one[k] = theirsRaw[k];
+        if (printSettingsFrom(one)[k] !== theirsRaw[k]) delete theirsRaw[k];
+      });
       // A file from before the grid was centred carries a top margin: compare and use it as an offset,
       // worked out for the settings it will print with (the file's, and mine for any it lacks, as the
       // merge below keeps them).
-      const theirsRaw = theirs, conversion = {};
+      const conversion = {};
       theirs = migrateTuning(theirsRaw, mine, conversion);
       const mineBack = printSettings.backImageKey || null;   // as saved (just reloaded)
       // The file's card back: a file without the field leaves ours alone; one whose image isn't here
@@ -6494,11 +6502,13 @@
         [{ label: 'Keep mine', value: false }, { label: "Use the file's", value: true }]) === true;
       if (use){
         try {
-          // loadTuning() checks the result fits the page, as for any saved settings.
-          // A top margin no offset in hundredths matches is stored as it is (with no offset of mine to
-          // win over it), so loading converts it as it does saved settings and resets nothing for it.
-          const base = migrateTuning(readSavedTuning() || {});
-          if (conversion.fits === false) delete base.offsetYIn;
+          // loadTuning() checks the result fits the page, as for any saved settings, and converts any
+          // top margin stored, so mine isn't converted here: one no offset in hundredths matches stays
+          // saved and resets nothing. When the file places the cards vertically, its placement replaces
+          // mine; a top margin of its own that no offset matches is stored as it is, for the same reason.
+          const base = Object.assign({}, readSavedTuning() || {});
+          const filePlaces = typeof theirs.offsetYIn !== 'undefined' || conversion.fits === false;
+          if (filePlaces){ delete base.topIn; delete base.offsetYIn; }
           localStorage.setItem('mtgTuning', JSON.stringify(Object.assign(base, conversion.fits === false ? theirsRaw : theirs, { backImageKey: theirsBack })));
           notes.push(loadTuning());
         } catch(_){}
