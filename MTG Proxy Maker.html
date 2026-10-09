@@ -418,6 +418,8 @@
 
     .help-list { margin:0; padding-left:18px; font-size:13px; line-height:1.6; }
     .footnote { font-size: 12px; color:#6b7280; margin-top: 4px; }
+    /* Print settings: the saved paper / gap / bleed puts the cards too close to the edge. */
+    #safeMarginNote { color:#b45309; }
 
     .modal .sheet textarea { width: 100%; min-height: 240px; resize: vertical; box-sizing: border-box; display: block; margin: 0; }
     .right { margin-left: auto; }
@@ -546,6 +548,7 @@
     :root[data-theme="dark"] .modal .sheet h3 { color:#e5e7eb; }
     :root[data-theme="dark"] .help-list { color:#cbd5e1; }
     :root[data-theme="dark"] .footnote { color:#9ca3af; }
+    :root[data-theme="dark"] #safeMarginNote { color:#fbbf24; }
     :root[data-theme="dark"] .warning { background:#292524; color:#fed7aa; border-color:#a16207; }
     /* Printed pages are the same in either theme: the dark theme's screen colours stay off paper (cut
        marks in the print colour; text such as a broken image's alt text in the light theme's colour;
@@ -681,6 +684,7 @@
             </div>
           </div>
           <p class="footnote" id="cutStyleHint" hidden>Corners need a gap between cards.</p>
+          <p class="footnote" id="safeMarginNote" role="status" hidden>The cards come within 4 mm of the edge, so most printers will cut some of them off.</p>
           <div class="tune-row"><span id="duplexLabel" title="Prints a back page after each page; flip the sheet on the long edge">Double-sided printing</span>
             <input id="duplexToggle" type="checkbox" aria-labelledby="duplexLabel" />
           </div>
@@ -6848,6 +6852,64 @@
       document.getElementById('cutStyleHint').hidden = !noGap;
     }
 
+    // Most home printers can't print the outer few millimetres of the sheet.
+    const SAFE_MARGIN_IN = 4 / MM_PER_IN;
+
+    // The smallest distance from the cards (bleed included) to any edge of the paper, in inches, with
+    // the printer offsets at 0: offsets correct the printer's own shift, so they never make a choice
+    // unavailable. Negative when the cards don't fit at all.
+    function safeMarginOf(s){
+      const L = computeLayout(Object.assign({}, s, { offsetYIn: 0, leftIn: 0, backOffsetXIn: 0, backOffsetYIn: 0 }));
+      return Math.min((L.page.w - L.grid.w) / 2, (L.page.h - L.grid.h) / 2);
+    }
+
+    // "Letter", "A4 with 2 mm bleed", "Letter with a 3 mm gap and 1 mm bleed".
+    function describeCombination(s){
+      const gap = s.gapMm > 0 ? 'a ' + s.gapMm + ' mm gap' : '', bleed = s.bleedMm > 0 ? s.bleedMm + ' mm bleed' : '';
+      const extras = [gap, bleed].filter(Boolean).join(' and ');
+      return (s.paper === 'a4' ? 'A4' : 'Letter') + (extras ? ' with ' + extras : '');
+    }
+
+    // Disables each paper / gap / bleed choice that, with the rest of the draft, would put the cards
+    // within SAFE_MARGIN_IN of an edge. The checked choice is never disabled (nor changed); if the draft
+    // itself is too close, a note says so. The reason is the label's tooltip, and also hidden text in the
+    // label so screen readers say it with the choice (a disabled radio can't take focus, and the label's
+    // title isn't part of the radio's name or description). With a card size that isn't a number,
+    // everything stays as it was.
+    function refreshSafeChoices(){
+      const draft = readTuneDraft();
+      if (![draft.cardWIn, draft.cardHIn].every(isFinite)) return;
+      const fieldOf = { paper: 'paper', gap: 'gapMm', bleed: 'bleedMm' };
+      Object.keys(fieldOf).forEach(function(name){
+        tuneModal.querySelectorAll('input[name="' + name + '"]').forEach(function(r){
+          const label = r.closest('label');
+          let reason = '';
+          if (!r.checked){
+            const s = Object.assign({}, draft);
+            s[fieldOf[name]] = name === 'paper' ? r.value : Number(r.value);
+            const m = safeMarginOf(s);
+            if (m < SAFE_MARGIN_IN - 1e-9){
+              reason = 'Doesn\'t fit on ' + describeCombination(s) + ': ' +
+                (m < 0 ? 'the cards would run off the page.' : 'the cards would be ' + (m * MM_PER_IN).toFixed(1) + ' mm from the edge (4 mm needed).');
+            }
+          }
+          r.disabled = !!reason;
+          if (reason) label.title = reason; else label.removeAttribute('title');
+          let spoken = label.querySelector('.safe-reason');
+          if (reason && !spoken){
+            spoken = document.createElement('span');
+            spoken.className = 'sr-only safe-reason';
+            label.appendChild(spoken);
+          }
+          if (spoken) spoken.textContent = reason ? '. ' + reason : '';
+        });
+      });
+      // Only on a change, so the status note isn't re-announced on every keystroke.
+      const note = document.getElementById('safeMarginNote');
+      const hide = safeMarginOf(draft) >= SAFE_MARGIN_IN - 1e-9;
+      if (note.hidden !== hide) note.hidden = hide;
+    }
+
     // Mini sheet preview of the draft settings, outlined red when the draft can't be saved.
     // With a field that isn't a number, the last drawing stays (marked bad).
     function renderTunePreview(){
@@ -6898,6 +6960,7 @@
       }
 
       refreshCutStyleChoices();
+      refreshSafeChoices();
       openModal(tuneModal);
       renderTunePreview();
       const first = tuneRadio('paper'); if (first) first.focus();
@@ -6905,9 +6968,10 @@
 
     tuneModal.addEventListener('change', function(e){
       if (e.target && e.target.name === 'gap') refreshCutStyleChoices();
+      refreshSafeChoices();
       renderTunePreview();
     });
-    tuneModal.addEventListener('input', function(){ renderTunePreview(); });
+    tuneModal.addEventListener('input', function(){ refreshSafeChoices(); renderTunePreview(); });
 
     bindTuneButton();
 
@@ -7028,6 +7092,7 @@
         tuneBackX.value = '0.00';
         tuneBackY.value = '0.00';
         refreshCutStyleChoices();
+        refreshSafeChoices();
         renderTunePreview();
       });
     }
