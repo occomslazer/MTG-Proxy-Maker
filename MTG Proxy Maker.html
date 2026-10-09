@@ -1904,6 +1904,8 @@
           ![s.backOffsetXIn, s.backOffsetYIn].every(function(v){ return v === undefined || isFinite(v); })) return 'Enter a number in every field.';
       if (s.cardWIn <= 0 || s.cardHIn <= 0) return 'Card width and height must be greater than zero.';
       const fmt = function(v){ return String(Math.round(v * 100) / 100); };
+      // Room to 0.01 in, rounded down: an offset the message calls too big never reads as within it.
+      const fmtRoom = function(v){ return (Math.floor(v * 100 + 1e-6) / 100).toFixed(2); };
       const extras = (b > 0 ? ' + bleed' : '') + (g > 0 ? ' + gaps' : '');
       if (grid.h > page.h + 1e-6){
         return 'Cards this tall don\'t fit: ' + rows + ' rows × ' + s.cardHIn.toFixed(3) + '″' + extras + ' = ' + grid.h.toFixed(2) +
@@ -1911,7 +1913,7 @@
       }
       const roomY = (page.h - grid.h) / 2;
       if (Math.abs(s.offsetYIn) > roomY + 1e-6){
-        return 'The vertical offset moves the cards off the page: ' + s.offsetYIn.toFixed(2) + '″, but there is only ' + roomY.toFixed(2) + '″ of room above and below.';
+        return 'The vertical offset moves the cards off the page: ' + s.offsetYIn.toFixed(2) + '″, but there is only ' + fmtRoom(roomY) + '″ of room above and below.';
       }
       const neededW = grid.w + 2 * Math.abs(s.leftIn);
       if (neededW > page.w + 1e-6){
@@ -1921,11 +1923,11 @@
       }
       const room = (page.w - grid.w) / 2, shiftX = s.leftIn + (s.backOffsetXIn || 0);
       if (Math.abs(shiftX) > room + 1e-6){
-        return 'The back side runs off the page: offset ' + shiftX.toFixed(2) + '″ but there is only ' + room.toFixed(2) + '″ of room on each side.';
+        return 'The back side runs off the page: offset ' + shiftX.toFixed(2) + '″ but there is only ' + fmtRoom(room) + '″ of room on each side.';
       }
       const shiftY = s.offsetYIn + (s.backOffsetYIn || 0);
       if (Math.abs(shiftY) > roomY + 1e-6){
-        return 'The back side runs off the page: offset ' + shiftY.toFixed(2) + '″ but there is only ' + roomY.toFixed(2) + '″ of room above and below.';
+        return 'The back side runs off the page: offset ' + shiftY.toFixed(2) + '″ but there is only ' + fmtRoom(roomY) + '″ of room above and below.';
       }
       return '';
     }
@@ -6453,8 +6455,6 @@
     // saved tuning, its card back already re-stored as importedBackKey when the file carried it.
     // Resolves with the notes of any settings reset because they didn't fit the page.
     async function importPrintSettings(theirs, importedBackKey, keptKeys){
-      // A file from before the grid was centred carries a top margin: compare and use it as an offset.
-      theirs = migrateTuning(theirs);
       // Start from what is saved now, not this tab's copy: another tab may have changed the settings
       // or the card back since, and the comparison and the clean-up below must describe the real ones.
       const notes = [loadTuning()];
@@ -6466,6 +6466,11 @@
         fitMode: savedFitMode, scaleLock: typeof saved.scaleLock === 'undefined' ? true : !!saved.scaleLock
       });
       const keys = ['paper','gapMm','bleedMm','cutStyle','duplex','dfcOnBack','backOffsetXIn','backOffsetYIn','offsetYIn','leftIn','cardWIn','cardHIn','fitMode','scaleLock'];
+      // A file from before the grid was centred carries a top margin: compare and use it as an offset,
+      // worked out for the settings it will print with (the file's, and mine for any it lacks, as the
+      // merge below keeps them).
+      const theirsRaw = theirs, conversion = {};
+      theirs = migrateTuning(theirsRaw, mine, conversion);
       const mineBack = printSettings.backImageKey || null;   // as saved (just reloaded)
       // The file's card back: a file without the field leaves ours alone; one whose image isn't here
       // (a lightweight export) would print the default back. The same image under another storage key
@@ -6488,7 +6493,11 @@
       if (use){
         try {
           // loadTuning() checks the result fits the page, as for any saved settings.
-          localStorage.setItem('mtgTuning', JSON.stringify(Object.assign({}, migrateTuning(readSavedTuning() || {}), theirs, { backImageKey: theirsBack })));
+          // A top margin no offset in hundredths matches is stored as it is (with no offset of mine to
+          // win over it), so loading converts it as it does saved settings and resets nothing for it.
+          const base = migrateTuning(readSavedTuning() || {});
+          if (conversion.fits === false) delete base.offsetYIn;
+          localStorage.setItem('mtgTuning', JSON.stringify(Object.assign(base, conversion.fits === false ? theirsRaw : theirs, { backImageKey: theirsBack })));
           notes.push(loadTuning());
         } catch(_){}
       }
@@ -6707,7 +6716,8 @@
       return { offsetYIn: +Number(offsetYIn).toFixed(2), leftIn: +Number(leftIn).toFixed(2), cardWIn: +Number(cardWIn).toFixed(4), cardHIn: +Number(cardHIn).toFixed(4) };
     }
 
-    function applyTuning(offsetYIn, leftIn, cardWIn, cardHIn){
+    // Applies printer tuning and saves it, unless `persist` is false (the saved tuning is kept as is).
+    function applyTuning(offsetYIn, leftIn, cardWIn, cardHIn, persist){
       offsetYIn = Number(offsetYIn) || 0;
       leftIn  = Number(leftIn) || 0;
       cardWIn = Number(cardWIn) || readInchesVar('--cell-w', BASE_W_IN);
@@ -6722,7 +6732,7 @@
       document.documentElement.style.setProperty('--cell-h', cardHIn.toFixed(4)+'in');
 
       // persist (merge with any existing fields like scaleLock); an old top margin is dropped for good
-      try{
+      if (persist !== false) try{
         const prev = migrateTuning(JSON.parse(localStorage.getItem('mtgTuning') || '{}'));
         prev.offsetYIn = offsetYIn; prev.leftIn = leftIn; prev.cardWIn = cardWIn; prev.cardHIn = cardHIn;
         localStorage.setItem('mtgTuning', JSON.stringify(prev));
@@ -6738,25 +6748,47 @@
     }
 
     // Saved or imported tuning from before the grid was centred kept a top margin (topIn). Returns a
-    // copy with the vertical offset that prints at the same place for that tuning's paper, gap, bleed
-    // and card size. The old default 0.25 (stored by every Save, even untouched) becomes centred.
-    function migrateTuning(t){
+    // copy with the vertical offset that prints at the same place for that tuning's paper, gap, bleed,
+    // card size and back offset; any of those it lacks (or has invalid) comes from `fallback` (the
+    // settings it will be used with), else the defaults. The old default 0.25 (stored by every Save,
+    // even untouched) becomes centred. A top margin that isn't a number is dropped.
+    // Offsets are whole hundredths, so the offset is the nearest hundredth that keeps the front and
+    // back grids on the page (the room is rarely a whole number of hundredths). With `info`, sets
+    // info.exact (the unrounded offset) and info.fits (whether the rounded one fits); both stay
+    // undefined when nothing was converted.
+    function migrateTuning(t, fallback, info){
       const out = Object.assign({}, t);
-      if (typeof out.topIn === 'undefined') return out;
-      const top = Number(out.topIn);
+      if (!Object.prototype.hasOwnProperty.call(out, 'topIn')) return out;
+      const raw = out.topIn;
       delete out.topIn;
+      const top = (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '')) ? Number(raw) : NaN;
       if (typeof out.offsetYIn !== 'undefined' || !isFinite(top)) return out;
-      if (Math.abs(top - 0.25) < 1e-9){ out.offsetYIn = 0; return out; }
-      const centred = computeLayout(Object.assign({}, PRINT_DEFAULTS, {
-        paper: PAPER_SIZES[out.paper] ? out.paper : 'letter',
-        gapMm: GAP_CHOICES_MM.includes(out.gapMm) ? out.gapMm : 0,
-        bleedMm: BLEED_CHOICES_MM.includes(out.bleedMm) ? out.bleedMm : 0,
+      const fb = fallback || {};
+      const pick = function(key, valid, dflt){ return valid(out[key]) ? out[key] : valid(fb[key]) ? fb[key] : dflt; };
+      const isPaper = function(v){ return typeof v === 'string' && Object.prototype.hasOwnProperty.call(PAPER_SIZES, v); };
+      const isSize = function(v){ return typeof v === 'number' && isFinite(v) && v > 0; };
+      const isOffset = function(v){ return typeof v === 'number' && isFinite(v); };
+      const room = computeLayout(Object.assign({}, PRINT_DEFAULTS, {
+        paper: pick('paper', isPaper, 'letter'),
+        gapMm: pick('gapMm', function(v){ return GAP_CHOICES_MM.includes(v); }, 0),
+        bleedMm: pick('bleedMm', function(v){ return BLEED_CHOICES_MM.includes(v); }, 0),
         offsetYIn: 0, leftIn: 0,
-        cardWIn: isFinite(Number(out.cardWIn)) && Number(out.cardWIn) > 0 ? Number(out.cardWIn) : DEFAULT_TUNING.cardWIn,
-        cardHIn: isFinite(Number(out.cardHIn)) && Number(out.cardHIn) > 0 ? Number(out.cardHIn) : DEFAULT_TUNING.cardHIn,
+        cardWIn: +pick('cardWIn', isSize, DEFAULT_TUNING.cardWIn).toFixed(4),
+        cardHIn: +pick('cardHIn', isSize, DEFAULT_TUNING.cardHIn).toFixed(4),
         backOffsetXIn: 0, backOffsetYIn: 0
       })).grid.y;
-      out.offsetYIn = +(top - centred).toFixed(2);
+      const exact = top - room;
+      // Centred for the old default; otherwise the nearest hundredth.
+      let hundredths = Math.abs(top - 0.25) < 1e-9 ? 0 : Math.round(exact * 100);
+      // The offsets that keep both sides on the page, as layoutProblem checks them, in hundredths;
+      // the preferred one moves to the nearest end when it is outside them.
+      const backY = +pick('backOffsetYIn', isOffset, 0).toFixed(2);
+      const lo = Math.ceil((Math.max(-room, -room - backY) - 1e-6) * 100 - 1e-9);
+      const hi = Math.floor((Math.min(room, room - backY) + 1e-6) * 100 + 1e-9);
+      const fits = lo <= hi;
+      if (fits) hundredths = Math.min(hi, Math.max(lo, hundredths));
+      out.offsetYIn = +(hundredths / 100).toFixed(2) + 0;
+      if (info){ info.exact = exact; info.fits = fits; }
       return out;
     }
 
@@ -6769,9 +6801,13 @@
         loadPrintSettings();
         var raw = localStorage.getItem('mtgTuning');
         var t = raw ? (JSON.parse(raw) || {}) : {};
-        // Saved before the grid was centred (a top margin): store it converted, once.
-        var migrated = (t && typeof t === 'object' && !Array.isArray(t)) ? migrateTuning(t) : t;
-        if (JSON.stringify(migrated) !== JSON.stringify(t)){ t = migrated; localStorage.setItem('mtgTuning', JSON.stringify(t)); }
+        // Saved before the grid was centred (a top margin): converted here, and stored (by applyTuning
+        // or below) only once the converted tuning is known to fit.
+        var conversion = {};
+        var migrated = (t && typeof t === 'object' && !Array.isArray(t)) ? migrateTuning(t, null, conversion) : t;
+        var converted = JSON.stringify(migrated) !== JSON.stringify(t);
+        var keepTopMargin = false;
+        t = migrated;
         savedFitMode = t.fitMode === 'contain' ? 'contain' : 'cover';
         if(raw){
           var hasGeometry = ['offsetYIn','leftIn','cardWIn','cardHIn'].some(function(k){ return typeof t[k] !== 'undefined'; });
@@ -6784,7 +6820,14 @@
             offY = g.offsetYIn; left = g.leftIn; w = g.cardWIn; h = g.cardHIn;
             // Saved by an older version or carried in by an imported file
             var problem = tuningProblem(offY, left, w, h);
-            if (problem){
+            // The top margin fitted, but no offset in hundredths does: use the nearest one, keep the
+            // margin saved (it is converted again next time) and reset nothing that fitted before.
+            if (problem && typeof conversion.exact === 'number' && !tuningProblem(conversion.exact, left, w, h)){
+              keepTopMargin = true;
+              console.warn('Saved top margin has no exact vertical offset: ' + problem);
+              note = 'Your saved top margin can\'t be matched exactly; check the vertical offset in Print settings';
+              setStatus(note);
+            } else if (problem){
               // Find the culprit: the print settings (gap, bleed, back offsets) or the printer tuning.
               if (!computeLayout(Object.assign(currentLayoutSettings(), PLAIN_PRINT, { offsetYIn: offY, leftIn: left, cardWIn: w, cardHIn: h })).problem){
                 savePrintSettings(PLAIN_PRINT, true);   // laid out at the end of loadTuning
@@ -6795,15 +6838,22 @@
                 offY = DEFAULT_TUNING.offsetYIn; left = DEFAULT_TUNING.leftIn; w = DEFAULT_TUNING.cardWIn; h = DEFAULT_TUNING.cardHIn;
               }
             }
-            applyTuning(offY, left, w, h);
+            applyTuning(offY, left, w, h, !keepTopMargin);
           }
           // Print settings that don't fit even with the current tuning (e.g. from an imported file).
-          if (computeLayout().problem){
+          if (!keepTopMargin && computeLayout().problem){
             savePrintSettings(PLAIN_PRINT, true);   // laid out at the end of loadTuning
             reset('Saved print settings didn\'t fit the page; gap, bleed and back offsets were reset');
           }
           if (tuneScaleLock){
             tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
+          }
+          // A converted top margin applyTuning didn't store (one that wasn't a number): drop it now.
+          if (converted && !keepTopMargin){
+            try{
+              const now = readSavedTuning();
+              if (now) localStorage.setItem('mtgTuning', JSON.stringify(migrateTuning(now)));
+            }catch(_){}
           }
         }
       }catch(_){}

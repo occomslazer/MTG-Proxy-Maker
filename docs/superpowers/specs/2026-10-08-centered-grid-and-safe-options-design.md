@@ -23,7 +23,9 @@ with a 3 mm gap lost about 1 mm at the bottom. The grid started 0.25″ from the
 - Back pages keep `y_back = y_front + backOffsetY`.
 - Screen, print, PDF and back pages all follow, because all of them draw from `computeLayout`.
 - Default effect: Letter, no gap: the grid moves down 0.0525″ (1.3 mm); margins become 7.7 mm top
-  and bottom (previously 6.4 / 9.0 mm). Letter, 3 mm gap: 4.7 / 4.7 mm (previously 6.4 / 3.0 mm).
+  and bottom (previously 6.4 / 9.0 mm). Letter, 3 mm gap: the grid moves up 1.7 mm, to 4.7 / 4.7 mm
+  (previously 6.4 / 3.0 mm). A4 has more spare height, so its default print moves down about 10 mm
+  (0.399″), to 16.5 mm top and bottom.
 
 ## 2. Greying out choices that won't print
 
@@ -33,8 +35,8 @@ with a 3 mm gap lost about 1 mm at the bottom. The grid started 0.25″ from the
   safe margin to any edge. The check uses offsets of 0 (offsets correct the printer's own shift, so
   they never make a choice unavailable).
 - Re-evaluated live whenever any draft value changes (radios and card-size fields).
-- A disabled choice's tooltip says why, e.g. "Doesn't fit on Letter with a 3 mm gap: the cards would
-  be 1.7 mm from the edge (4 mm needed)."
+- A disabled choice's tooltip says why, e.g. "Doesn't fit on Letter with a 3 mm gap and 1 mm bleed: the
+  cards would be 1.7 mm from the edge (4 mm needed)."
 - The currently selected choice is never disabled. If the saved combination is already inside the
   safe margin, it stays selected and a note under the choices says: "The cards come within 4 mm of
   the edge, so most printers will cut some of them off."
