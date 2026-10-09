@@ -492,6 +492,7 @@ sys.exit(1 if fail else 0)
      - "default grid centred vertically (spec 2026-10-08); captured with the app's own image handlers";
      - the `compare-shifted.py` results from Step 2.
   4. Run the gate twice into fresh dirs. Both runs must give 0 px on every page against the new baseline.
+  5. In `.claude/tests/tests-layout.js`, set `BASELINE_SHIFT = 0` (it compares against the reference data, which is now captured with the centred grid) and confirm the suite still passes 39/39.
 
 - [ ] **Step 4: Full matrix.** Run all of the following; all must PASS:
   - every in-page suite;
