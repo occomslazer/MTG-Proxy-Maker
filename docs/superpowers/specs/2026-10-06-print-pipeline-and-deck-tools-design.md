@@ -95,7 +95,7 @@ The Print settings dialog (Help → Print settings) is the home of every print s
 | Cut-line style | Ticks · Full lines · Corners | Ticks; Corners is disabled with a hint when the gap is 0 |
 | Double-sided printing | toggle | Off |
 | Card back | default image, or **Upload…**; **Use default** returns to the default | Default image |
-| ▸ Fine-tuning (collapsed) | Top margin, horizontal offset, card width/height, ratio lock, image fit (all as today), back-side offset X/Y (new, inches, default 0) | Today's values |
+| ▸ Fine-tuning (collapsed) | Top margin (now Vertical offset, see 2026-10-08-centered-grid-and-safe-options-design.md), horizontal offset, card width/height, ratio lock, image fit (all as today), back-side offset X/Y (new, inches, default 0) | Today's values |
 
 - A live mini preview of one sheet reflects the current settings.
 - Save validates that everything fits (see 2.3) and explains what doesn't, as today.
@@ -130,12 +130,15 @@ The Print settings dialog (Help → Print settings) is the home of every print s
 Geometry (w, h = card size; b = bleed; g = gap; all inches):
 
 - Bleed box size: `bw = w + 2b`, `bh = h + 2b`. Grid size: `gridW = 3·bw + 2g`, `gridH = 3·bh + 2g`.
-- First bleed box: `x0 = (page.w − gridW) / 2 + offsetX`, `y0 = topMargin`.
+- First bleed box: `x0 = (page.w − gridW) / 2 + offsetX`, `y0 = (page.h − gridH) / 2 + offsetY`
+  (changed 2026-10-08, see 2026-10-08-centered-grid-and-safe-options-design.md; it was `y0 = topMargin`).
 - Cell (col c, row r): bleed box at `(x0 + c·(bw + g), y0 + r·(bh + g))`; trim box = bleed box
   inset by `b` on every side.
-- Fit: `3·bw + 2g + 2·|offsetX| ≤ page.w` and `topMargin + 3·bh + 2g ≤ page.h`; and always (back
-  offsets take effect the moment double-sided printing is switched on) `|offsetX + backOffsetX| ≤ (page.w − gridW)/2` and the back grid's top/bottom
-  (`topMargin + backOffsetY`) inside the page. Otherwise `problem` names what doesn't fit.
+- Fit: the grid with its offsets stays on the page: `3·bw + 2g + 2·|offsetX| ≤ page.w`, `gridH ≤ page.h`
+  and `|offsetY| ≤ (page.h − gridH)/2`; and always (back offsets take effect the moment double-sided
+  printing is switched on) `|offsetX + backOffsetX| ≤ (page.w − gridW)/2` and
+  `|offsetY + backOffsetY| ≤ (page.h − gridH)/2`. Otherwise `problem` names what doesn't fit
+  (changed 2026-10-08, see 2026-10-08-centered-grid-and-safe-options-design.md).
 - Loading saved or imported settings that don't fit resets the culprit: gap, bleed and back
   offsets when those are the cause, otherwise the printer tuning.
 

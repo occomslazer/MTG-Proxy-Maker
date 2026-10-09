@@ -11,7 +11,7 @@ A single-file HTML app that pulls card images from [Scryfall](https://scryfall.c
 - **Multiple pages** — add as many pages as you need; all pages print at once. New cards fill the first empty cell, and **Remove gaps** closes up empty cells left by deleting cards
 - **Print-ready layout** — Letter or A4 pages with precise card sizing, optional gaps, bleed and cut lines
 - **Double-sided printing** — card backs (the default or your own) printed behind each page, lined up for a long-edge flip
-- **Printer calibration** — fine-tune margins, card dimensions, and image fit mode (cover/contain)
+- **Printer calibration** — fine-tune the grid's position, card dimensions, and image fit mode (cover/contain)
 - **Dark mode** — toggle between light and dark themes
 - **Export / Import** — save and restore deck layouts as `.mtgproxy` files (full or lightweight), or export a print-ready PDF
 - **PWA support** — install as a standalone app; previously fetched cards work offline
@@ -76,13 +76,13 @@ Cards default to 2.475″ × 3.465″ (99% of the standard 2.5″ × 3.5″). Pr
 - **Double-sided printing** — a back page after each page (see below)
 - **Card back** — the default image, or **Upload…** your own; **Use default** goes back to the default
 
-Nothing changes until you click **Save**; **Close** or Esc discards your changes. **Reset** returns gap, bleed, cut lines, margins, card size and back offsets to their defaults.
+Nothing changes until you click **Save**; **Close** or Esc discards your changes. **Reset** returns gap, bleed, cut lines, printer offsets, card size and back offsets to their defaults.
 
 Cut lines print only when the **Cut marks** switch is on (or press **M**).
 
 If prints appear clipped or misaligned, open **Printer fine-tuning** in the same dialog:
 
-1. Adjust top margin, horizontal offset, or card dimensions
+1. Adjust the vertical or horizontal offset (the cards are centred on the page; offsets move them), or card dimensions
 2. Leave **Keep 2.5×3.5 ratio** on to maintain the aspect ratio
 3. Choose **Cover** (fill cell, may crop edges) or **Contain** (fit inside, may show margins)
 4. With double-sided printing, use **Back offset X / Y** to line the backs up with the fronts
