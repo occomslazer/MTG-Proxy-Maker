@@ -420,6 +420,8 @@
     .footnote { font-size: 12px; color:#6b7280; margin-top: 4px; }
     /* Print settings: the saved paper / gap / bleed puts the cards too close to the edge. */
     #safeMarginNote { color:#b45309; }
+    /* Empty (the setup is safe): out of the flow, so it leaves no gap, but still a live region. */
+    #safeMarginNote:empty { position: absolute; margin: 0; }
 
     .modal .sheet textarea { width: 100%; min-height: 240px; resize: vertical; box-sizing: border-box; display: block; margin: 0; }
     .right { margin-left: auto; }
@@ -684,7 +686,7 @@
             </div>
           </div>
           <p class="footnote" id="cutStyleHint" hidden>Corners need a gap between cards.</p>
-          <p class="footnote" id="safeMarginNote" role="status" hidden>The cards come within 4 mm of the edge, so most printers will cut some of them off.</p>
+          <p class="footnote" id="safeMarginNote" role="status"></p>
           <div class="tune-row"><span id="duplexLabel" title="Prints a back page after each page; flip the sheet on the long edge">Double-sided printing</span>
             <input id="duplexToggle" type="checkbox" aria-labelledby="duplexLabel" />
           </div>
@@ -6920,15 +6922,20 @@
       return (s.paper === 'a4' ? 'A4' : 'Letter') + (extras ? ' with ' + extras : '');
     }
 
+    const SAFE_MARGIN_NOTE = 'Warning: the cards come within 4 mm of the edge, so most printers will cut some of them off.';
+
     // Disables each paper / gap / bleed choice that, with the rest of the draft, would put the cards
-    // within SAFE_MARGIN_IN of an edge. The checked choice is never disabled (nor changed); if the draft
-    // itself is too close, a note says so. The reason is the label's tooltip, and also hidden text in the
-    // label so screen readers say it with the choice (a disabled radio can't take focus, and the label's
-    // title isn't part of the radio's name or description). With a card size that isn't a number,
-    // everything stays as it was.
+    // within SAFE_MARGIN_IN of an edge and closer than the draft does now. So a safe draft greys every
+    // unsafe choice, while a draft that is already too close (saved that way) keeps every choice that
+    // improves it: there is always a clickable step toward a safe setup. The checked choice is never
+    // disabled (nor changed); if the draft itself is too close, a note says so. A disabled choice's
+    // reason is the label's tooltip, and also the radio's description (a hidden span the radio's
+    // aria-describedby points at), since the label's title is neither the radio's name nor its
+    // description. With a card size that isn't a number, everything stays as it was.
     function refreshSafeChoices(){
       const draft = readTuneDraft();
       if (![draft.cardWIn, draft.cardHIn].every(isFinite)) return;
+      const current = safeMarginOf(draft);
       const fieldOf = { paper: 'paper', gap: 'gapMm', bleed: 'bleedMm' };
       Object.keys(fieldOf).forEach(function(name){
         tuneModal.querySelectorAll('input[name="' + name + '"]').forEach(function(r){
@@ -6938,26 +6945,32 @@
             const s = Object.assign({}, draft);
             s[fieldOf[name]] = name === 'paper' ? r.value : Number(r.value);
             const m = safeMarginOf(s);
-            if (m < SAFE_MARGIN_IN - 1e-9){
-              reason = 'Doesn\'t fit on ' + describeCombination(s) + ': ' +
+            if (m < SAFE_MARGIN_IN - 1e-9 && m < current - 1e-9){
+              reason = "Doesn't fit on " + describeCombination(s) + ': ' +
                 (m < 0 ? 'the cards would run off the page.' : 'the cards would be ' + (m * MM_PER_IN).toFixed(1) + ' mm from the edge (4 mm needed).');
             }
           }
           r.disabled = !!reason;
           if (reason) label.title = reason; else label.removeAttribute('title');
-          let spoken = label.querySelector('.safe-reason');
-          if (reason && !spoken){
-            spoken = document.createElement('span');
-            spoken.className = 'sr-only safe-reason';
-            label.appendChild(spoken);
+          const id = 'safeReason-' + name + '-' + r.value;
+          let described = document.getElementById(id);
+          if (reason && !described){
+            // Hidden: not drawn and not part of the radio's name, but still read as its description.
+            described = document.createElement('span');
+            described.id = id;
+            described.className = 'safe-reason';
+            described.hidden = true;
+            label.appendChild(described);
           }
-          if (spoken) spoken.textContent = reason ? '. ' + reason : '';
+          if (described) described.textContent = reason;
+          if (reason) r.setAttribute('aria-describedby', id); else r.removeAttribute('aria-describedby');
         });
       });
-      // Only on a change, so the status note isn't re-announced on every keystroke.
+      // The note stays in the accessibility tree and only its text changes, so the status is announced
+      // when it appears; it's written only on a change, so it isn't re-announced on every keystroke.
       const note = document.getElementById('safeMarginNote');
-      const hide = safeMarginOf(draft) >= SAFE_MARGIN_IN - 1e-9;
-      if (note.hidden !== hide) note.hidden = hide;
+      const text = current >= SAFE_MARGIN_IN - 1e-9 ? '' : SAFE_MARGIN_NOTE;
+      if (note.textContent !== text) note.textContent = text;
     }
 
     // Mini sheet preview of the draft settings, outlined red when the draft can't be saved.

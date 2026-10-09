@@ -38,8 +38,10 @@ with a 3 mm gap lost about 1 mm at the bottom. The grid started 0.25″ from the
 - A disabled choice's tooltip says why, e.g. "Doesn't fit on Letter with a 3 mm gap and 1 mm bleed: the
   cards would be 1.7 mm from the edge (4 mm needed)."
 - The currently selected choice is never disabled. If the saved combination is already inside the
-  safe margin, it stays selected and a note under the choices says: "The cards come within 4 mm of
-  the edge, so most printers will cut some of them off."
+  safe margin, it stays selected and a note under the choices says: "Warning: the cards come within
+  4 mm of the edge, so most printers will cut some of them off."
+- A choice that is unsafe but still better than the current draft (only possible when the draft
+  itself is too close) stays available, so the user can always step toward a safe setup.
 - Cut-line styles keep their own rule (Corners needs a gap).
 - At the default card size: Letter greys 2 and 3 mm bleed, and 1 mm bleed with any gap (and vice
   versa); A4 greys 3 mm bleed, and 2 mm bleed with any gap (and vice versa).
