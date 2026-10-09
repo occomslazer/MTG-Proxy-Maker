@@ -20,10 +20,12 @@ with a 3 mm gap lost about 1 mm at the bottom. The grid started 0.25″ from the
   rounds to the nearest hundredth that keeps the front and the back (with the saved back offset) on
   the page. The cards move by less than 0.01″, and settings that fitted before are never reset by
   the conversion. The converted value is saved only once it is known to fit.
-- In the rare case where no hundredth fits (a nearly full-height grid with a back offset), the
-  nearest offset is applied for the session but not saved: the old margin stays stored and is
-  converted again on each load, nothing is reset, and a note asks the user to check the vertical
-  offset in Print settings. PDF export shows the layout problem until the user fixes the offset there.
+- In the rare case where no hundredth fits (only possible with a back offset Y, on a nearly
+  full-height grid), the nearest offset is applied for the session but not saved: the old margin
+  stays stored and is converted again on each load, nothing is reset, and a note asks the user to
+  check the vertical offset and back offset Y in Print settings. While it lasts no vertical offset
+  can be saved at all (the back side has no room for any of them), so the back offset Y has to
+  change too. PDF export shows the layout problem until the user fixes them there.
 - Imported files that carry `topIn` are converted the same way when their settings are used, for the
   settings they will print with: the file's paper, gap, bleed, card size and back offset, and mine
   for any the file lacks or has invalid (a damaged file's invalid paper, gap or bleed is left out, so
@@ -51,7 +53,7 @@ with a 3 mm gap lost about 1 mm at the bottom. The grid started 0.25″ from the
 - The currently selected choice is never disabled. If the saved combination is already inside the
   safe margin, it stays selected and a note under the choices says: "Warning: the cards come within
   4 mm of the edge, so most printers will cut some of them off."
-- A choice that is unsafe but still better than the current draft (only possible when the draft
+- A choice that is unsafe but no worse than the current draft (only possible when the draft
   itself is too close) stays available, so the user can always step toward a safe setup.
 - Cut-line styles keep their own rule (Corners needs a gap).
 - At the default card size: Letter greys 2 and 3 mm bleed, and 1 mm bleed with any gap (and vice
@@ -61,8 +63,9 @@ with a 3 mm gap lost about 1 mm at the bottom. The grid started 0.25″ from the
 
 - This change moves default prints on purpose (approved by the user). Before the reference prints
   in `.claude/tests/print-baseline/` are replaced:
-  1. Prove the new default print equals the old reference shifted down by exactly 0.0525″, with
-     nothing else changed (rendered comparison at high DPI against the shifted old reference).
+  1. Prove the new default print equals the old reference shifted down by 5 CSS px (0.052″; the
+     calculator moves the grid 0.0525″, and Chrome places it on whole pixels), with nothing else
+     changed (rendered comparison at high DPI against the shifted old reference).
   2. Geometry, PDF box and PDF export checks pass for every scenario (Letter, A4, gaps, bleed,
      double-sided, preview, dark theme, panel open).
   3. Then regenerate the reference prints from the new build and record the commit.

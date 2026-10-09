@@ -652,7 +652,7 @@
 
   <!-- Print settings (Help → Print settings) -->
   <div id="tuneModal" class="modal">
-    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="tuneTitle">
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="tuneTitle" aria-describedby="safeMarginNote">
       <h2 id="tuneTitle">Print settings</h2>
       <div class="tune-layout">
         <div class="tune-fields">
@@ -703,7 +703,7 @@
             <summary>Printer fine-tuning</summary>
             <div class="warning">⚠️ Only adjust these if your prints look clipped or misaligned. Most printers work with the defaults.</div>
             <div class="panel" style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;">
-              <label class="field" title="Moves the grid up/down from the page centre. Positive = down.">
+              <label class="field" title="Moves the grid up/down from the page center. Positive = down.">
                 Vertical offset (in)
                 <input id="tuneOffsetYIn" type="number" step="0.01" value="0.00" style="width:120px">
               </label>
@@ -6468,13 +6468,21 @@
         fitMode: savedFitMode, scaleLock: typeof saved.scaleLock === 'undefined' ? true : !!saved.scaleLock
       });
       const keys = ['paper','gapMm','bleedMm','cutStyle','duplex','dfcOnBack','backOffsetXIn','backOffsetYIn','offsetYIn','leftIn','cardWIn','cardHIn','fitMode','scaleLock'];
-      // A paper, gap or bleed in the file that isn't valid (a damaged file) would load as the default:
-      // leave it out, so mine is compared, kept and used to place the cards, like a missing one.
+      // A paper, gap, bleed, offset or card size in the file that isn't valid (a damaged file) would
+      // load as the default or reset my printer tuning: leave it out, so mine is compared, kept and used
+      // to place the cards, like a missing one.
       const theirsRaw = Object.assign({}, theirs);
-      ['paper', 'gapMm', 'bleedMm'].forEach(function(k){
+      const isNumber = function(v){ return typeof v === 'number' && isFinite(v); };
+      const validField = {
+        paper: null, gapMm: null, bleedMm: null,   // as printSettingsFrom accepts them
+        offsetYIn: isNumber, leftIn: isNumber, backOffsetXIn: isNumber, backOffsetYIn: isNumber,
+        cardWIn: function(v){ return isNumber(v) && v > 0; }, cardHIn: function(v){ return isNumber(v) && v > 0; }
+      };
+      Object.keys(validField).forEach(function(k){
         if (!Object.prototype.hasOwnProperty.call(theirsRaw, k)) return;
         const one = {}; one[k] = theirsRaw[k];
-        if (printSettingsFrom(one)[k] !== theirsRaw[k]) delete theirsRaw[k];
+        const ok = validField[k] ? validField[k](theirsRaw[k]) : printSettingsFrom(one)[k] === theirsRaw[k];
+        if (!ok) delete theirsRaw[k];
       });
       // A file from before the grid was centred carries a top margin: compare and use it as an offset,
       // worked out for the settings it will print with (the file's, and mine for any it lacks, as the
@@ -6507,8 +6515,8 @@
           // saved and resets nothing. When the file places the cards vertically, its placement replaces
           // mine; a top margin of its own that no offset matches is stored as it is, for the same reason.
           const base = Object.assign({}, readSavedTuning() || {});
-          const filePlaces = typeof theirs.offsetYIn !== 'undefined' || conversion.fits === false;
-          if (filePlaces){ delete base.topIn; delete base.offsetYIn; }
+          // (A converted top margin always leaves an offset in theirs, matched or not.)
+          if (typeof theirs.offsetYIn !== 'undefined'){ delete base.topIn; delete base.offsetYIn; }
           localStorage.setItem('mtgTuning', JSON.stringify(Object.assign(base, conversion.fits === false ? theirsRaw : theirs, { backImageKey: theirsBack })));
           notes.push(loadTuning());
         } catch(_){}
@@ -6837,7 +6845,7 @@
             if (problem && typeof conversion.exact === 'number' && !tuningProblem(conversion.exact, left, w, h)){
               keepTopMargin = true;
               console.warn('Saved top margin has no exact vertical offset: ' + problem);
-              note = 'Your saved top margin can\'t be matched exactly; check the vertical offset in Print settings';
+              note = 'Your saved top margin can\'t be matched exactly; check the vertical offset and back offset Y in Print settings';
               setStatus(note);
             } else if (problem){
               // Find the culprit: the print settings (gap, bleed, back offsets) or the printer tuning.
@@ -6968,7 +6976,6 @@
             // Hidden: not drawn and not part of the radio's name, but still read as its description.
             described = document.createElement('span');
             described.id = id;
-            described.className = 'safe-reason';
             described.hidden = true;
             label.appendChild(described);
           }
@@ -7030,6 +7037,12 @@
         if (tuneScaleLock) tuneScaleLock.checked = (typeof t.scaleLock === 'undefined') ? true : !!t.scaleLock;
       }catch(_){
         if (tuneScaleLock) tuneScaleLock.checked = true;
+      }
+      // A saved card size that isn't 2.5:3.5 would be recomputed by the ratio lock, so Save would
+      // change it unasked: open with the lock off for it (Save then stores the lock as off).
+      if (tuneScaleLock && tuneScaleLock.checked &&
+          Math.abs(parseFloat(tuneCardWIn.value) / BASE_W_IN * BASE_H_IN - parseFloat(tuneCardHIn.value)) > 0.0005){
+        tuneScaleLock.checked = false;
       }
 
       refreshCutStyleChoices();

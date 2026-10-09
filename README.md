@@ -76,6 +76,8 @@ Cards default to 2.475″ × 3.465″ (99% of the standard 2.5″ × 3.5″). Pr
 - **Double-sided printing** — a back page after each page (see below)
 - **Card back** — the default image, or **Upload…** your own; **Use default** goes back to the default
 
+Paper, gap and bleed choices that would put the cards within 4 mm of the edge (where most printers can't print) are greyed out; hover over one to see why.
+
 Nothing changes until you click **Save**; **Close** or Esc discards your changes. **Reset** returns gap, bleed, cut lines, printer offsets, card size and back offsets to their defaults.
 
 Cut lines print only when the **Cut marks** switch is on (or press **M**).
