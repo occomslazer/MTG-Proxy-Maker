@@ -41,7 +41,7 @@
   node .claude/tests/print-harness.mjs "http://127.0.0.1:8765/MTG%20Proxy%20Maker.html" .claude/tests/print-out
   .claude/tests/.venv/Scripts/python .claude/tests/compare-prints.py .claude/tests/print-baseline .claude/tests/print-out
   ```
-  Expected: `one-page-plain p1 0`, `tuned-full-size p1 488`, `two-pages-cuts p1 599`, `p2 0`, exit 0. Never regenerate `print-baseline/`. Delete `print-out` afterwards.
+  Expected: 0 px on every page (`one-page-plain p1 0`, `tuned-full-size p1 0`, `two-pages-cuts p1 0`, `p2 0`), exit 0. The reference was re-captured on 2026-10-08 from `feat/centered-grid` at `73f8e3d` with the app's own image handlers (see `print-baseline/README.txt`); the harness's legacy mode was removed then, so every run, with or without `--geometry`, compares the same way. Never regenerate `print-baseline/` unless a plan moves default prints on purpose and first proves the move with `.claude/tests/compare-shifted.py`. Delete `print-out` afterwards.
 - **Saved state:** save and restore the user's localStorage (`mtgProxyPages`, `mtgTuning`, `mtgThemeDark`, `mtgDeckPanelOpen`) around manual experiments.
 - **Scryfall in tests:** never depend on the live API in new suites. Every new suite stubs `window.fetch` for `https://api.scryfall.com/` (code below) and restores it in `finally`. `scryfallFetch` calls the global `fetch`, so the stub is picked up; its rate-limit gaps (≈0.55 s for search/collection) still apply, so keep the number of calls per test small.
 - **Commits:** one per task (plus review-fix commits), only tracked project files (`.claude/` is git-excluded). Trailer: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. No TODO/FIXME comments.
@@ -1566,7 +1566,7 @@ Grep the whole file for any other user-facing "Decklist" wording that refers to 
   - New suites: `tests-deck-data.js` (20), `tests-deck-rows.js` (18), `tests-deck-panel.js` (37), `tests-deck-plusminus.js` (34), `tests-art-picker.js` (36), `tests-tokens.js` (43).
   - Regression runner (102) and every batch 1 suite.
   - Console: no `TypeError`/`ReferenceError`.
-  - Real-print gate (0 / 488 / 599 / 0) and the panel-open comparison from Task 3 Step 7.
+  - Real-print gate (0 px on every page, see Conventions) and the panel-open comparison from Task 3 Step 7 (since 2026-10-08: `two-pages-cuts-deck` against a normal `two-pages-cuts` run, 0 px).
   - Geometry matrix:
     ```bash
     node .claude/tests/print-harness.mjs "http://127.0.0.1:8765/MTG%20Proxy%20Maker.html" .claude/tests/print-out --geometry --pdf one-page-plain two-pages-cuts tuned-full-size letter-gap2-full a4-plain a4-gap2-corners letter-bleed3 a4-gap2-bleed1 letter-duplex a4-duplex-tuned

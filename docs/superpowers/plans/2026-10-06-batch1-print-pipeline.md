@@ -41,7 +41,7 @@
   node .claude/tests/print-harness.mjs "http://127.0.0.1:8765/MTG%20Proxy%20Maker.html" .claude/tests/print-out
   .claude/tests/.venv/Scripts/python .claude/tests/compare-prints.py .claude/tests/print-baseline .claude/tests/print-out
   ```
-  Expected: every line `PASS … 0 pixels differ` (or within tolerance) and exit code 0. The baseline in `.claude/tests/print-baseline/` was captured from `main` at `d3348fd` and must never be regenerated. Delete `.claude/tests/print-out` afterwards.
+  Expected: every page `PASS … 0 pixels differ` (`one-page-plain p1`, `tuned-full-size p1`, `two-pages-cuts p1` and `p2`) and exit code 0. The baseline in `.claude/tests/print-baseline/` was re-captured on 2026-10-08 from `feat/centered-grid` at `73f8e3d` (default grid centred vertically, captured with the app's own image handlers; see its `README.txt`), replacing the 2026-10-06 capture from `main` at `d3348fd`. The harness has no legacy mode any more. Never regenerate the baseline unless a plan moves default prints on purpose and first proves the move with `.claude/tests/compare-shifted.py`. Delete `.claude/tests/print-out` afterwards.
 - **Commits:** one per task (plus review-fix commits). Message trailer: `Co-Authored-By: <your model attribution>`. Never push.
 
 ---

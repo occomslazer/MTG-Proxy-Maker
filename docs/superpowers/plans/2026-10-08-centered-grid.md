@@ -465,7 +465,10 @@ for i in range(a.page_count):
     ia = Image.frombytes('RGB', (pa.width, pa.height), pa.samples)
     ib = Image.frombytes('RGB', (pb.width, pb.height), pb.samples)
     moved = Image.new('RGB', ia.size, 'white'); moved.paste(ia.crop((0, 0, ia.width, ia.height - shift)), (0, shift))
-    diff = ImageChops.difference(moved, ib).convert('L').point(lambda v: 255 if v > 24 else 0)
+    # Largest channel difference, as compare-prints.py counts it (a luminance average would hide a
+    # change in one channel).
+    r, g, bl = ImageChops.difference(moved, ib).split()
+    diff = ImageChops.lighter(ImageChops.lighter(r, g), bl).point(lambda v: 255 if v > 24 else 0)
     n = sum(diff.histogram()[255:]); total = ia.width * ia.height
     if n > total * 0.0005:
         diff.save(os.path.splitext(new_path)[0] + f'-p{i+1}-shiftdiff.png'); fail += 1
